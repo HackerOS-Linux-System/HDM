@@ -11,16 +11,34 @@ path = "src/main.rs"
 
 [dependencies]
 tokio              = { version = "1", features = ["full"] }
-nix                = { version = "0.27", features = ["fs", "process", "signal", "user", "ioctl"] }
 libc               = "0.2"
 serde              = { version = "1", features = ["derive"] }
 serde_json         = "1"
 tracing            = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender   = "0.2"
-toml               = "0.8"
-dirs               = "5.0"
-glob               = "0.3"
-chrono             = { version = "0.4", features = ["serde"] }
+# .hk is HackerOS's own configuration format (a TOML alternative with
+# explicit `-> key => value` nesting and built-in ${...} interpolation) —
+# see https://hackeros-linux-system.github.io/HackerOS-Website/tools-docs/hk.html.
+# HDM's config lives at /etc/hdm/hdm.hk and is parsed via this crate in
+# config.rs (load_hk_file / resolve_interpolations); `indexmap` is a direct
+# dependency too since hk-parser's own public types (`HkConfig`,
+# `HkValue::Map`) are expressed in terms of `indexmap::IndexMap`.
+hk-parser          = "0.3.2"
+indexmap           = "2"
 uuid               = { version = "1", features = ["v4"] }
 sha2               = "0.10"
+
+# Previously-declared but entirely unused dependencies, removed:
+#   nix (0.27, fs/process/signal/user/ioctl features) — every syscall HDM
+#     needs (VT ioctls, chown/chmod, setuid/setgid, sigaction) is already
+#     called directly through `libc`; no `nix::` symbol was ever imported.
+#   dirs, glob, chrono — no `dirs::`, `glob::`, or `chrono::` symbol was
+#     ever imported in daemon/src/*.rs either. (The greeter crate, a
+#     separate Cargo.toml, does use its own `chrono` for the clock — this
+#     removal is daemon-only and doesn't touch that.)
+#   toml — replaced by hk-parser above; HDM's config format is now .hk,
+#     not TOML.
+# These were pure build-time/compile-time bloat: cargo has to resolve,
+# download, and compile each one on every clean build even though nothing
+# in this crate ever called into them.
