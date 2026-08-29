@@ -5,6 +5,16 @@ members = [
     "greeter",
 ]
 
+# `greeter/Cargo.toml` inherits `time` from here via `{ workspace = true }`
+# (cookie 0.18, pulled in transitively by the Tauri stack, needs time's
+# 1-argument `parse` API which landed in 0.3.36). This section was missing
+# entirely in the original manifest, which broke *every* cargo invocation
+# anywhere in the workspace — including `cd daemon && cargo build`, since
+# Cargo still has to parse every member's manifest to resolve the workspace
+# even when you only ask it to build one crate.
+[workspace.dependencies]
+time = "0.3.36"
+
 [profile.release]
 opt-level = 3
 lto       = "thin"
