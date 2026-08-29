@@ -1,12 +1,12 @@
 [package]
-name = "bedm-greeter"
+name = "hdm-greeter"
 version = "1.0.0"
 edition = "2021"
-description = "BEDM greeter — display manager UI (Tauri v2 + React)"
-authors = ["LegendaryOS Team"]
+description = "HDM greeter — display manager UI"
+authors = ["HackerOS Team <hackeros068@gmail.com>"]
 
 [[bin]]
-name = "bedm-greeter"
+name = "hdm-greeter"
 path = "src/main.rs"
 
 [build-dependencies]
