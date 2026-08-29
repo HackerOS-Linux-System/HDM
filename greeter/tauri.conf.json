@@ -4,10 +4,10 @@
   "version": "1.0.0",
   "identifier": "org.legendaryos.bedm-greeter",
   "build": {
-    "beforeDevCommand": "cd ../bedm-ui && npm run dev",
-    "beforeBuildCommand": "mkdir -p icons && cp ../../images/icon.png icons/icon.png && cd ../bedm-ui && npm run build",
+    "beforeDevCommand": "cd ../ui && npm run dev",
+    "beforeBuildCommand": "mkdir -p icons && cp ../../images/icon.png icons/icon.png && cd ../ui && npm run build",
     "devUrl": "http://localhost:5174",
-    "frontendDist": "../bedm-ui/dist"
+    "frontendDist": "../ui/dist"
   },
   "app": {
     "windows": [
@@ -24,7 +24,14 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "'self' ipc: http://ipc.localhost",
+        "font-src": "'self'",
+        "img-src": "'self' data: blob: asset: http://asset.localhost",
+        "style-src": "'self' 'unsafe-inline'",
+        "script-src": "'self'"
+      }
     }
   },
   "bundle": {
