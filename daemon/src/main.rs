@@ -9,15 +9,15 @@ use std::{fs, os::unix::fs::PermissionsExt, sync::Arc};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-pub const BEDM_VERSION: &str = "0.6.0";
-pub const SOCKET_PATH: &str = "/run/bedm/bedm.sock";
-pub const CONFIG_PATH: &str = "/etc/bedm/bedm.toml";
-pub const LOG_DIR: &str = "/tmp/bedm-logs";
-pub const RUN_DIR: &str = "/run/bedm";
+pub const HDM_VERSION: &str = "0.6.0";
+pub const SOCKET_PATH: &str = "/run/hdm/hdm.sock";
+pub const CONFIG_PATH: &str = "/etc/hdm/hdm.hk";
+pub const LOG_DIR: &str = "/tmp/hdm-logs";
+pub const RUN_DIR: &str = "/run/hdm";
 
 #[derive(Debug, Clone)]
 pub struct DaemonState {
-    pub config: config::BedmConfig,
+    pub config: config::HdmConfig,
     pub active_session: Option<session::ActiveSession>,
     pub greeter_pid: Option<u32>,
     /// Server-side authentication lockout tracking, keyed by username.
@@ -30,10 +30,10 @@ pub struct DaemonState {
 #[tokio::main]
 async fn main() {
     init_logging();
-    info!("BEDM v{} starting", BEDM_VERSION);
+    info!("HDM v{} starting", HDM_VERSION);
 
     if unsafe { libc::getuid() } != 0 {
-        eprintln!("BEDM must run as root (UID 0)");
+        eprintln!("HDM must run as root (UID 0)");
         std::process::exit(1);
     }
 
@@ -44,7 +44,7 @@ async fn main() {
 
     let cfg = config::load_config(CONFIG_PATH).unwrap_or_else(|e| {
         warn!("Config load error: {} — using defaults", e);
-        config::BedmConfig::default()
+        config::HdmConfig::default()
     });
     info!("Config loaded from {}", CONFIG_PATH);
     info!("Autologin user: {:?}", cfg.autologin_user);
@@ -95,14 +95,14 @@ async fn main() {
 
 fn init_logging() {
     // Try XDG_RUNTIME_DIR first (user-writable, no root needed),
-    // then /tmp/bedm-logs, finally stderr-only fallback.
+    // then /tmp/hdm-logs, finally stderr-only fallback.
     let log_dir = std::env::var("XDG_RUNTIME_DIR")
-        .map(|d| format!("{}/bedm/logs", d))
+        .map(|d| format!("{}/hdm/logs", d))
         .unwrap_or_else(|_| LOG_DIR.to_string());
 
     let dir_ok = fs::create_dir_all(&log_dir).is_ok();
     if dir_ok {
-        let file_appender = tracing_appender::rolling::daily(&log_dir, "bedm.log");
+        let file_appender = tracing_appender::rolling::daily(&log_dir, "hdm.log");
         let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
         // Intentionally leak guard so logging continues for the process lifetime.
         std::mem::forget(guard);
@@ -112,7 +112,7 @@ fn init_logging() {
             .with_max_level(tracing::Level::INFO)
             .init();
     } else {
-        // Fall back to stderr — avoids panic on systems where /var/log/bedm
+        // Fall back to stderr — avoids panic on systems where /var/log/hdm
         // is not writable (e.g. running as a non-root developer).
         tracing_subscriber::fmt()
             .with_ansi(true)
@@ -126,7 +126,7 @@ fn init_logging() {
 }
 
 fn setup_runtime_dirs() {
-    for dir in &[RUN_DIR, "/run/bedm/sessions"] {
+    for dir in &[RUN_DIR, "/run/hdm/sessions"] {
         fs::create_dir_all(dir).ok();
         fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).ok();
     }
@@ -155,7 +155,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
                 st.config
                     .greeter_path
                     .clone()
-                    .unwrap_or_else(|| "/usr/bin/bedm-greeter".to_string()),
+                    .unwrap_or_else(|| "/usr/bin/hdm-greeter".to_string()),
                 st.config.vt.unwrap_or(1),
             )
         };
@@ -167,8 +167,8 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
         }
 
         match tokio::process::Command::new(&greeter_path)
-            .env("BEDM_SOCKET", SOCKET_PATH)
-            .env("BEDM_CONFIG", CONFIG_PATH)
+            .env("HDM_SOCKET", SOCKET_PATH)
+            .env("HDM_CONFIG", CONFIG_PATH)
             .env("XDG_SESSION_TYPE", "wayland")
             .spawn()
         {
@@ -183,7 +183,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
             }
             Err(e) => {
                 error!("Failed to launch greeter '{}': {}", greeter_path, e);
-                error!("Is bedm-greeter installed at {}?", greeter_path);
+                error!("Is hdm-greeter installed at {}?", greeter_path);
                 return;
             }
         }
