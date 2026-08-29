@@ -10,16 +10,21 @@ use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
 pub const BEDM_VERSION: &str = "0.6.0";
-pub const SOCKET_PATH:  &str = "/run/bedm/bedm.sock";
-pub const CONFIG_PATH:  &str = "/etc/bedm/bedm.toml";
-pub const LOG_DIR:      &str = "/tmp/bedm-logs";
-pub const RUN_DIR:      &str = "/run/bedm";
+pub const SOCKET_PATH: &str = "/run/bedm/bedm.sock";
+pub const CONFIG_PATH: &str = "/etc/bedm/bedm.toml";
+pub const LOG_DIR: &str = "/tmp/bedm-logs";
+pub const RUN_DIR: &str = "/run/bedm";
 
 #[derive(Debug, Clone)]
 pub struct DaemonState {
     pub config: config::BedmConfig,
     pub active_session: Option<session::ActiveSession>,
     pub greeter_pid: Option<u32>,
+    /// Server-side authentication lockout tracking, keyed by username.
+    /// Lives here (not as a local in `ipc::handle_client`) so a client
+    /// cannot bypass a lockout by simply disconnecting and reconnecting —
+    /// see `pam_auth::RateLimiter` for details.
+    pub rate_limiter: pam_auth::RateLimiter,
 }
 
 #[tokio::main]
@@ -48,13 +53,16 @@ async fn main() {
         config: cfg.clone(),
         active_session: None,
         greeter_pid: None,
+        rate_limiter: pam_auth::RateLimiter::new(),
     }));
 
     setup_signals();
 
     if let Some(ref user) = cfg.autologin_user {
         let user = user.clone();
-        let session_type = cfg.autologin_session.clone()
+        let session_type = cfg
+            .autologin_session
+            .clone()
             .unwrap_or_else(|| "blue-environment".to_string());
         let delay = cfg.autologin_delay.unwrap_or(0);
         info!("Autologin: {} -> {} (delay={}s)", user, session_type, delay);
@@ -110,7 +118,10 @@ fn init_logging() {
             .with_ansi(true)
             .with_max_level(tracing::Level::INFO)
             .init();
-        tracing::warn!("Could not create log directory '{}', logging to stderr", log_dir);
+        tracing::warn!(
+            "Could not create log directory '{}', logging to stderr",
+            log_dir
+        );
     }
 }
 
@@ -141,7 +152,9 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
         let (greeter_path, vt_num) = {
             let st = state.lock().await;
             (
-                st.config.greeter_path.clone()
+                st.config
+                    .greeter_path
+                    .clone()
                     .unwrap_or_else(|| "/usr/bin/bedm-greeter".to_string()),
                 st.config.vt.unwrap_or(1),
             )
