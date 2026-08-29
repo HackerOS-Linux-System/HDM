@@ -20,10 +20,17 @@ pub struct ActiveSession {
 pub async fn list_sessions(state: &Arc<Mutex<DaemonState>>) -> Vec<SessionInfo> {
     let dirs = {
         let st = state.lock().await;
+        // Kept in sync with `config::HdmConfig::default().sessions_dir` —
+        // this fallback previously listed only two directories while the
+        // config default listed three, so the (extremely unlikely, but
+        // possible if `config.sessions_dir` were ever explicitly set to
+        // `None`) fallback path would have silently ignored
+        // /usr/local/share/wayland-sessions.
         st.config.sessions_dir.clone().unwrap_or_else(|| {
             vec![
                 "/usr/share/wayland-sessions".to_string(),
                 "/usr/share/xsessions".to_string(),
+                "/usr/local/share/wayland-sessions".to_string(),
             ]
         })
     };
@@ -227,7 +234,7 @@ pub async fn launch_session(
         },
         wayland_display: None,
     };
-    let session_file = format!("/run/bedm/sessions/{}.json", session_uuid);
+    let session_file = format!("/run/hdm/sessions/{}.json", session_uuid);
     let _ = fs::write(
         &session_file,
         serde_json::to_string_pretty(&active).unwrap_or_default(),
@@ -272,7 +279,7 @@ pub async fn launch_session(
             }
         }
 
-        let _ = fs::remove_file(format!("/run/bedm/sessions/{}.json", uuid_clone));
+        let _ = fs::remove_file(format!("/run/hdm/sessions/{}.json", uuid_clone));
         let mut st = state_clone.lock().await;
         if st
             .active_session
