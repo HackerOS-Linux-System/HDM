@@ -102,11 +102,11 @@ enum Response {
     Bye,
 }
 
-pub struct BedmClient {
+pub struct HdmClient {
     stream: UnixStream,
 }
 
-impl BedmClient {
+impl HdmClient {
     pub async fn connect(socket_path: &str) -> Result<(Self, DaemonInfoResponse), String> {
         let stream = UnixStream::connect(socket_path)
             .await
