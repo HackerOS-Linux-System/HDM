@@ -2,13 +2,13 @@
 
 mod ipc_client;
 
-use ipc_client::{BedmClient, SessionInfo, UserInfo};
+use ipc_client::{HdmClient, SessionInfo, UserInfo};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::Mutex;
 
-type ClientState = Arc<Mutex<Option<BedmClient>>>;
+type ClientState = Arc<Mutex<Option<HdmClient>>>;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct AuthResult {
@@ -41,9 +41,9 @@ pub struct GreeterConfig {
 #[tauri::command]
 async fn connect_daemon(state: tauri::State<'_, ClientState>) -> Result<DaemonInfo, String> {
     let socket_path =
-        std::env::var("BEDM_SOCKET").unwrap_or_else(|_| "/run/bedm/bedm.sock".to_string());
+        std::env::var("HDM_SOCKET").unwrap_or_else(|_| "/run/hdm/hdm.sock".to_string());
 
-    match BedmClient::connect(&socket_path).await {
+    match HdmClient::connect(&socket_path).await {
         Ok((client, info)) => {
             *state.lock().await = Some(client);
             Ok(DaemonInfo {
@@ -55,7 +55,7 @@ async fn connect_daemon(state: tauri::State<'_, ClientState>) -> Result<DaemonIn
                 connected: true,
             })
         }
-        Err(e) => Err(format!("Cannot connect to BEDM daemon: {}", e)),
+        Err(e) => Err(format!("Cannot connect to HDM daemon: {}", e)),
     }
 }
 
@@ -156,7 +156,7 @@ async fn power_action(
     client.power_action(&action).await
 }
 
-#[derive(serde::Deserialize, Default)]
+#[derive(Default)]
 struct GreeterRawGeneral {
     background: Option<String>,
     theme: Option<String>,
@@ -164,25 +164,40 @@ struct GreeterRawGeneral {
     show_user_list: Option<bool>,
 }
 
-#[derive(serde::Deserialize, Default)]
-struct GreeterRawConfig {
-    #[serde(default)]
-    general: GreeterRawGeneral,
-}
-
+/// Reads just the `[general]` section of `/etc/hdm/hdm.hk` (HackerOS's
+/// `.hk` config format — see the comment above `hk-parser` in Cargo.toml)
+/// for the handful of display fields the greeter itself needs
+/// (wallpaper/theme/clock format/show_user_list). This intentionally does
+/// NOT go through `hk_parser::resolve_interpolations` — the greeter only
+/// ever reads plain scalar values here (background is a literal
+/// filesystem path, not something that references other keys), and
+/// skipping it keeps this a pure, allocation-light read with no risk of
+/// surfacing a cyclic/invalid-reference error from an unrelated section of
+/// the daemon's config file just to render a login screen.
 fn read_general_section(config_path: &str) -> GreeterRawGeneral {
-    std::fs::read_to_string(config_path)
-        .ok()
-        .and_then(|content| toml::from_str::<GreeterRawConfig>(&content).ok())
-        .map(|cfg| cfg.general)
-        .unwrap_or_default()
+    let Some(content) = std::fs::read_to_string(config_path).ok() else {
+        return GreeterRawGeneral::default();
+    };
+    let Ok(config) = hk_parser::parse_hk(&content) else {
+        return GreeterRawGeneral::default();
+    };
+    let Some(general) = config.get("general").and_then(|v| v.as_map().ok()) else {
+        return GreeterRawGeneral::default();
+    };
+
+    GreeterRawGeneral {
+        background: general.get("background").and_then(|v| v.as_string().ok()),
+        theme: general.get("theme").and_then(|v| v.as_string().ok()),
+        clock_format: general.get("clock_format").and_then(|v| v.as_string().ok()),
+        show_user_list: general.get("show_user_list").and_then(|v| v.as_bool().ok()),
+    }
 }
 
 #[tauri::command]
 fn get_wallpaper() -> Option<String> {
-    // Read from BEDM config
+    // Read from HDM config
     let config_path =
-        std::env::var("BEDM_CONFIG").unwrap_or_else(|_| "/etc/bedm/bedm.toml".to_string());
+        std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
 
     // Try to read background from the TOML config
     let general = read_general_section(&config_path);
@@ -194,8 +209,8 @@ fn get_wallpaper() -> Option<String> {
 
     // Fallback wallpaper paths
     let paths = [
-        "/etc/bedm/wallpaper.png",
-        "/etc/bedm/wallpaper.jpg",
+        "/etc/hdm/wallpaper.png",
+        "/etc/hdm/wallpaper.jpg",
         "/usr/share/Blue-Environment/wallpapers/default.png",
         "/usr/share/wallpapers/default.png",
     ];
@@ -208,7 +223,7 @@ fn get_wallpaper() -> Option<String> {
 #[tauri::command]
 fn get_greeter_config() -> GreeterConfig {
     let config_path =
-        std::env::var("BEDM_CONFIG").unwrap_or_else(|_| "/etc/bedm/bedm.toml".to_string());
+        std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
 
     let general = read_general_section(&config_path);
 
@@ -240,7 +255,7 @@ fn get_current_date() -> String {
 
 // ── System status commands ──────────────────────────────────────────────────
 //
-// BedmBridge in tauri.ts (checkNetwork / getBattery / getVolume /
+// HdmBridge in tauri.ts (checkNetwork / getBattery / getVolume /
 // setKeyboardLayout) called these four command names from day one, but
 // none of them existed here — every call in a real (non-mock) build was
 // silently swallowed by the bridge's own try/catch and fell back to a
@@ -252,7 +267,7 @@ fn get_current_date() -> String {
 
 /// True if any non-loopback network interface is administratively and
 /// operationally up. Deliberately does NOT attempt to reach the public
-/// internet (no ping, no DNS lookup, no HTTP request) — BEDM is a login
+/// internet (no ping, no DNS lookup, no HTTP request) — HDM is a login
 /// screen that must work fully offline, so "network ok" here means
 /// "link-layer connectivity exists", which is the most this command
 /// should ever claim.
@@ -370,7 +385,7 @@ fn parse_amixer_volume(output: &str) -> Option<u8> {
 /// here. Errors are intentionally swallowed: a failed layout switch should
 /// never block someone from logging in.
 #[tauri::command]
-async fn set_keyboard_layout_bedm(layout: String) {
+async fn set_keyboard_layout_hdm(layout: String) {
     let _ = tokio::task::spawn_blocking(move || {
         std::process::Command::new("setxkbmap")
             .arg(&layout)
@@ -396,7 +411,7 @@ fn read_user_avatar(path: String) -> Option<String> {
     Some(format!("data:{};base64,{}", mime, b64))
 }
 
-// ── Fix: "BEDM wychodzi poza ekran" (greeter renders off-screen) ───────────
+// ── Fix: "HDM wychodzi poza ekran" (greeter renders off-screen) ───────────
 //
 // Root cause: tauri.conf.json previously hard-coded a 1920x1080,
 // non-resizable, "fullscreen" window. On any monitor that isn't exactly
@@ -483,10 +498,10 @@ fn main() {
             check_network,
             get_battery_info,
             get_volume_level,
-            set_keyboard_layout_bedm,
+            set_keyboard_layout_hdm,
         ])
         .run(tauri::generate_context!())
-        .expect("BEDM greeter error");
+        .expect("HDM greeter error");
 }
 
 #[cfg(test)]
