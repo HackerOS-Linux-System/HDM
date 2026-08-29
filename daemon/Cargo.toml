@@ -1,12 +1,12 @@
 [package]
-name = "bedm-daemon"
+name = "hdm-daemon"
 version = "1.0.0"
 edition = "2021"
-description = "BEDM — Blue Environment Display Manager daemon"
-authors = ["LegendaryOS Team"]
+description = "HDM — HackerOS Display Manager daemon"
+authors = ["HackerOS Team <hackeros068@gmail.com>"]
 
 [[bin]]
-name = "bedm"
+name = "hdm"
 path = "src/main.rs"
 
 [dependencies]
