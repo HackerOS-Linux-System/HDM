@@ -9,7 +9,7 @@ const isTauri = isTauriEnv();
 //
 // The original `invoke()` had no timeout at all: if the daemon hung (e.g.
 // blocked on a slow fprintd scan, a stuck PAM module, or a dead socket that
-// the OS hasn't noticed yet), an `await BedmBridge.foo()` call in App.tsx
+// the OS hasn't noticed yet), an `await HdmBridge.foo()` call in App.tsx
 // would simply never resolve — the greeter would sit frozen with no error,
 // no retry, and no way out short of a hard VT switch. This wraps every
 // underlying `core.invoke()` call with:
@@ -25,7 +25,7 @@ const isTauri = isTauriEnv();
 
 export class IpcTimeoutError extends Error {
   constructor(cmd: string, timeoutMs: number) {
-    super(`BEDM daemon did not respond to '${cmd}' within ${timeoutMs}ms`);
+    super(`HDM daemon did not respond to '${cmd}' within ${timeoutMs}ms`);
     this.name = 'IpcTimeoutError';
   }
 }
@@ -34,7 +34,7 @@ export class IpcError extends Error {
   public cause?: unknown;
 
   constructor(cmd: string, cause: unknown) {
-    super(`BEDM IPC call '${cmd}' failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    super(`HDM IPC call '${cmd}' failed: ${cause instanceof Error ? cause.message : String(cause)}`);
     this.name = 'IpcError';
     this.cause = cause;
   }
@@ -53,7 +53,7 @@ export class IpcValidationError extends Error {
   public issues: unknown;
 
   constructor(cmd: string, issues: unknown) {
-    super(`BEDM IPC call '${cmd}' returned an unexpected shape — see .issues for details`);
+    super(`HDM IPC call '${cmd}' returned an unexpected shape — see .issues for details`);
     this.name = 'IpcValidationError';
     this.issues = issues;
   }
@@ -132,7 +132,7 @@ async function invoke<T>(cmd: string, args?: unknown, opts: InvokeOptions<T> = {
 
       const isLastAttempt = attempt === maxAttempts;
       if (!isLastAttempt) {
-        console.warn(`[BedmBridge] '${cmd}' attempt ${attempt}/${maxAttempts} failed, retrying…`, e);
+        console.warn(`[HdmBridge] '${cmd}' attempt ${attempt}/${maxAttempts} failed, retrying…`, e);
         await sleep(RETRY_BACKOFF_MS * attempt);
         continue;
       }
@@ -154,7 +154,7 @@ import {
   UserInfoListSchema,
 } from './ipcSchemas';
 
-export const BedmBridge = {
+export const HdmBridge = {
   connectDaemon: () =>
     invoke<DaemonInfo>('connect_daemon', undefined, {
       timeoutMs: 10_000,
@@ -267,7 +267,7 @@ export const BedmBridge = {
 
   setKeyboardLayout: async (layout: string): Promise<void> => {
     try {
-      await invoke<void>('set_keyboard_layout_bedm', { layout });
+      await invoke<void>('set_keyboard_layout_hdm', { layout });
     } catch {
       /* best-effort — a failed layout switch shouldn't block login */
     }
@@ -425,7 +425,7 @@ function mockInvoke<T>(cmd: string, args?: unknown): Promise<T> {
     case 'read_user_avatar':
       return Promise.resolve(null as unknown as T);
 
-    // These three were referenced by BedmBridge (checkNetwork/getBattery/
+    // These three were referenced by HdmBridge (checkNetwork/getBattery/
     // getVolume) but had no corresponding case here, so every dev-mode
     // (non-Tauri) run silently hit the `default` branch below and got
     // `null` back instead of a plausible value — harmless in itself, but
@@ -440,7 +440,7 @@ function mockInvoke<T>(cmd: string, args?: unknown): Promise<T> {
     case 'get_volume_level':
       return delay(50).then(() => 62 as unknown as T);
 
-    case 'set_keyboard_layout_bedm':
+    case 'set_keyboard_layout_hdm':
       return Promise.resolve(undefined as unknown as T);
 
     default:
