@@ -1,8 +1,8 @@
 # HDM — HackerOS Display Manager
 
 **HDM** is a production display manager for Linux, built with:
-- **Rust** daemon (`bedm`) — manages PAM auth, sessions, VT switching
-- **Tauri + React** greeter (`bedm-greeter`) — the login UI
+- **Rust** daemon (`hdm`) — manages PAM auth, sessions, VT switching
+- **Tauri + React** greeter (`hdm-greeter`) — the login UI
 - **Unix socket IPC** — secure daemon↔greeter communication
 
 HDM is a rival to SDDM, GDM, and LightDM, designed for the
@@ -21,7 +21,7 @@ Wayland desktop but works with any session.
 - 🔌 **Power menu** — shutdown, reboot, suspend, hibernate with countdown
 - 🔒 **Brute-force protection** — 5 attempt limit per session
 - 📋 **systemd integration** — replaces `display-manager.service`
-- 🎨 **Wallpaper support** — reads `/etc/bedm/wallpaper.png`
+- 🎨 **Wallpaper support** — reads `/etc/hdm/wallpaper.png`
 
 ---
 
@@ -36,11 +36,11 @@ Wayland desktop but works with any session.
 │  │    PAM authentication                        │ │
 │  │    Session launching (drop privs to user)    │ │
 │  │    VT management                             │ │
-│  │    IPC: /run/bedm/bedm.sock                 │ │
+│  │    IPC: /run/hdm/hdm.sock                 │ │
 │  └───────────────┬─────────────────────────────┘ │
 │                  │ Unix socket (JSON)             │
 │  ┌───────────────▼─────────────────────────────┐ │
-│  │  hdm-greeter (Tauri, runs as _bedm user)     │ │
+│  │  hdm-greeter (Tauri, runs as _hdm user)     │ │
 │  │    Solid.js UI (TypeScript + Tailwind)       │ │
 │  │    Clock, user list, password input          │ │
 │  │    Session picker, power menu                │ │
@@ -75,28 +75,42 @@ apt install cargo nodejs npm libpam-dev
 sudo systemctl enable --now hdm
 ```
 
+> **Rust toolchain requirement:** HDM's config parser depends on
+> [`hk-parser`](https://hackeros-linux-system.github.io/HackerOS-Website/tools-docs/hk.html)
+> (crates.io, `hk-parser = "0.3.2"`), which pulls in `indexmap 2.14.x` →
+> `hashbrown 0.17.x`, a dependency that declares Rust's 2024 edition. That
+> means building `daemon/` and `greeter/` now requires **Rust 1.85 or
+> newer** (`rustup update stable` if you're on an older toolchain — the
+> `rustc`/`cargo` shipped by some LTS distro repos, e.g. Ubuntu 24.04's
+> `apt install cargo`, is only 1.75 and is too old for this). This is a
+> requirement of the `.hk`-parsing dependency itself, not something HDM's
+> own code opts into.
+
 ---
 
 ## Configuration
 
-Edit `/etc/hdm/hdm.hk`:
+Edit `/etc/hdm/hdm.hk` — HDM's config is in HackerOS's own
+[`.hk` format](https://hackeros-linux-system.github.io/HackerOS-Website/tools-docs/hk.html),
+not TOML:
 
-```toml
+```
 [general]
--> greeter_path => /usr/bin/hdm-greeter
--> vt => 1
--> theme => blue
+-> greeter_path   => "/usr/bin/hdm-greeter"
+-> vt             => 1
+-> theme          => blue
 -> show_user_list => true
--> allow_root => false
--> minimum_uid => 1000
+-> allow_root     => false
+-> minimum_uid    => 1000
 
-! Autologin (optional)
-! autologin_user    = "username"
-! autologin_session = "blue-environment"
+! Autologin (optional) — uncomment and fill in to enable:
+! [autologin]
+! -> user    => username
+! -> session => blue-environment
 
 [power]
-shutdown  = "shutdown -h now"
--> reboot    => reboot"
+-> shutdown  => "shutdown -h now"
+-> reboot    => reboot
 -> suspend   => "systemctl suspend"
 -> hibernate => "systemctl hibernate"
 ```
@@ -117,7 +131,7 @@ HDM reads user avatars from (in priority order):
 
 ```bash
 # View HDM logs
-journalctl -u bedm -f
+journalctl -u hdm -f
 
 # Or from file
 tail -f /var/log/hdm/hdm.log
@@ -144,7 +158,7 @@ from `style-src` entirely.
 **Fonts are self-hosted**, not loaded from Google's CDN — see
 `ui/src/fonts.css`. A login screen has to render before networking is
 necessarily up (fresh install, wifi still associating, airgapped
-machines), so BEDM ships its fonts (`@fontsource/oxanium`,
+machines), so HDM ships its fonts (`@fontsource/oxanium`,
 `@fontsource/dm-sans`, `@fontsource/jetbrains-mono`) as part of the built
 UI bundle instead of fetching them at runtime.
 
@@ -158,7 +172,7 @@ still hits the same lockout.
 
 ## Comparison
 
-| Feature               | BEDM | SDDM | GDM  | LightDM |
+| Feature               | HDM | SDDM | GDM  | LightDM |
 |-----------------------|------|------|------|---------|
 | Wayland native        | ✅   | ✅   | ✅   | ⚠️      |
 | X11 support           | ✅   | ✅   | ✅   | ✅      |
@@ -170,7 +184,7 @@ still hits the same lockout.
 | Aurora UI             | ✅   | ❌   | ❌   | ❌      |
 | Glassmorphism         | ✅   | ❌   | ❌   | ❌      |
 | Rust backend          | ✅   | ✅   | ❌   | ❌      |
-| React frontend        | ✅   | ❌   | ❌   | ❌      |
+| Solid.js frontend     | ✅   | ❌   | ❌   | ❌      |
 
 ---
 
