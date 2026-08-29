@@ -104,19 +104,19 @@ pub async fn run_server(state: Arc<Mutex<DaemonState>>) {
     let listener = match UnixListener::bind(SOCKET_PATH) {
         Ok(l) => l,
         Err(e) => {
-            error!("Failed to bind BEDM socket at {}: {}", SOCKET_PATH, e);
+            error!("Failed to bind HDM socket at {}: {}", SOCKET_PATH, e);
             return;
         }
     };
 
     std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o666)).ok();
-    info!("BEDM IPC listening on {}", SOCKET_PATH);
+    info!("HDM IPC listening on {}", SOCKET_PATH);
 
     tokio::spawn(async {
         let mut term =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
         term.recv().await;
-        info!("SIGTERM received — shutting down BEDM");
+        info!("SIGTERM received — shutting down HDM");
         let _ = std::fs::remove_file(SOCKET_PATH);
         std::process::exit(0);
     });
@@ -257,7 +257,7 @@ async fn handle_client(mut stream: UnixStream, state: Arc<Mutex<DaemonState>>) {
                     send_response(
                         &mut writer,
                         &DaemonResponse::Error {
-                            message: "Guest login is disabled in bedm.toml (allow_guest = false)"
+                            message: "Guest login is disabled in hdm.hk (allow_guest = false)"
                                 .to_string(),
                         },
                     )
@@ -461,7 +461,7 @@ async fn build_info_response() -> DaemonResponse {
         .unwrap_or(0.0) as u64;
     let (os_name, os_version) = read_os_release();
     DaemonResponse::Info {
-        version: crate::BEDM_VERSION.to_string(),
+        version: crate::HDM_VERSION.to_string(),
         hostname,
         uptime,
         os_name,
