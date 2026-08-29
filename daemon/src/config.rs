@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::fs;
 use tracing::warn;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BedmConfig {
     pub greeter_path: Option<String>,
     pub vt: Option<u8>,
@@ -22,7 +22,7 @@ pub struct BedmConfig {
     pub power: Option<PowerConfig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PowerConfig {
     pub shutdown: Option<String>,
     pub reboot: Option<String>,
@@ -217,4 +217,45 @@ reboot = "reboot"
 suspend = "systemctl suspend"
 hibernate = "systemctl hibernate"
 "#
+}
+
+#[cfg(test)]
+mod default_config_tests {
+    use super::*;
+
+    #[test]
+    fn default_config_content_is_valid_toml() {
+        // A malformed r#"..."# literal would silently write a broken
+        // config to disk on every fresh install via ensure_default_config()
+        // — this test would catch that at CI time instead of on a user's
+        // first boot.
+        assert!(load_config_str(default_config_content()).is_ok());
+    }
+
+    /// Guards against `config/bedm.toml` (the packaged file installed by
+    /// build.hl / the .deb / .rpm for fresh installs) drifting out of sync
+    /// with this function, which is what the daemon itself writes on first
+    /// boot via `ensure_default_config()` when no config file exists yet.
+    /// Two different install paths (self-bootstrap vs. packaged file)
+    /// silently disagreeing about the default config is exactly the kind
+    /// of thing that's invisible until a user diffs `/etc/bedm/bedm.toml`
+    /// against the docs and can't figure out why.
+    ///
+    /// Compares *parsed* config rather than raw text: the packaged file
+    /// carries an extra maintainer comment block explaining why it must
+    /// stay in sync, which default_config_content() intentionally doesn't
+    /// (it's written to a live system's /etc/bedm/bedm.toml verbatim).
+    #[test]
+    fn packaged_config_file_matches_default_config_content() {
+        let packaged_text = std::fs::read_to_string("../config/bedm.toml")
+            .expect("../config/bedm.toml should exist relative to the daemon crate root");
+        let packaged =
+            load_config_str(&packaged_text).expect("../config/bedm.toml must be valid TOML");
+        let builtin = load_config_str(default_config_content())
+            .expect("default_config_content() must be valid TOML");
+        assert_eq!(
+            packaged, builtin,
+            "config/bedm.toml has drifted from default_config_content() — keep their [general]/[power] values identical"
+        );
+    }
 }
