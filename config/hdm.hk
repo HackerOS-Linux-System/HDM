@@ -1,1 +1,70 @@
+! /etc/hdm/hdm.hk — HDM (HackerOS Display Manager) Configuration
+!
+! Format: .hk — HackerOS's own configuration format (a TOML alternative
+! with explicit "-> key => value" nesting and built-in ${...}
+! interpolation). Full syntax reference:
+!   https://hackeros-linux-system.github.io/HackerOS-Website/tools-docs/hk.html
+!
+! This file is installed verbatim by `build.hl install` / the .deb / the
+! .rpm the first time HDM is set up (an existing /etc/hdm/hdm.hk is never
+! overwritten — see install_config in build.hl). It is also what the
+! daemon itself writes to a fresh /etc/hdm/hdm.hk if none exists yet, via
+! config::ensure_default_config() in daemon/src/config.rs.
+!
+! IMPORTANT for maintainers: daemon/src/config.rs has a test
+! (packaged_config_file_matches_default_config_content) that asserts this
+! file's [general] and [power] sections parse to exactly the same
+! HdmConfig as config::default_config_content(). If you change a value in
+! one, change it in the other — `cd daemon && cargo test` will fail loudly
+! if they drift apart.
 
+[general]
+! Path to the greeter binary the daemon spawns on VT switch.
+-> greeter_path   => "/usr/bin/hdm-greeter"
+
+! Virtual terminal HDM switches to before launching the greeter.
+-> vt             => 1
+
+! Greeter theme name (passed through to the UI, see ui/src/app.css).
+-> theme          => blue
+
+! Show the list of local users (UID between minimum_uid and maximum_uid)
+! on the login screen, rather than only a plain username field.
+-> show_user_list => true
+
+! Whether "root" is an allowed login username. Kept off by default —
+! logging in graphically as root is almost never what you want.
+-> allow_root     => false
+
+! Whether the greeter's "Guest" button is shown at all. See
+! daemon/src/users.rs::ensure_guest_account for what a guest session is.
+-> allow_guest    => false
+
+! Only users with minimum_uid <= UID <= maximum_uid show up in the user
+! list and are eligible for live-mode autologin (see
+! daemon/src/users.rs::find_live_user).
+-> minimum_uid    => 1000
+-> maximum_uid    => 65533
+
+! strftime-style format string for the greeter's on-screen clock.
+-> clock_format   => "%H:%M"
+
+! Directories scanned for Wayland/X11 session .desktop files (see
+! daemon/src/session.rs::list_sessions). Later entries are for
+! locally-installed sessions that override the system-wide ones.
+-> sessions_dir   => ["/usr/share/wayland-sessions", "/usr/share/xsessions", "/usr/local/share/wayland-sessions"]
+
+! Uncomment and fill in to enable autologin (skips the greeter entirely
+! and launches straight into `session` for `user` after `delay` seconds):
+! [autologin]
+! -> user    => username
+! -> session => blue-environment
+! -> delay   => 0
+
+[power]
+! Shell commands HDM runs (via `sh -c`) for each power-menu action —
+! see daemon/src/ipc.rs::GreeterRequest::PowerAction.
+-> shutdown  => "shutdown -h now"
+-> reboot    => reboot
+-> suspend   => "systemctl suspend"
+-> hibernate => "systemctl hibernate"
