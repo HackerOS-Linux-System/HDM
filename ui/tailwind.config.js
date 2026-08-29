@@ -1,5 +1,5 @@
 export default {
-  content: ['./index.html', './src/**/*.{svelte,ts}'],
+  content: ['./index.html', './src/**/*.{tsx,ts}'],
   theme: {
     extend: {
       fontFamily: {
@@ -13,9 +13,9 @@ export default {
         'slide-down': 'slideDown 0.4s cubic-bezier(0.16,1,0.3,1) forwards',
         'scale-in': 'scaleIn 0.3s cubic-bezier(0.16,1,0.3,1) forwards',
         'pulse-glow': 'pulseGlow 2s ease-in-out infinite',
-        'shimmer': 'shimmer 2s linear infinite',
+        shimmer: 'shimmer 2s linear infinite',
         'spin-slow': 'spin 3s linear infinite',
-        'shake': 'shake 0.4s cubic-bezier(0.36,0.07,0.19,0.97)',
+        shake: 'shake 0.4s cubic-bezier(0.36,0.07,0.19,0.97)',
       },
       keyframes: {
         fadeIn: {
