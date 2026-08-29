@@ -14,21 +14,34 @@ use tracing::{info, warn};
 pub async fn find_live_user(state: &Arc<Mutex<DaemonState>>) -> Option<String> {
     let (min_uid, max_uid) = {
         let st = state.lock().await;
-        (st.config.minimum_uid.unwrap_or(1000), st.config.maximum_uid.unwrap_or(65533))
+        (
+            st.config.minimum_uid.unwrap_or(1000),
+            st.config.maximum_uid.unwrap_or(65533),
+        )
     };
 
     let passwd = fs::read_to_string("/etc/passwd").ok()?;
     for line in passwd.lines() {
         let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() < 7 { continue; }
+        if parts.len() < 7 {
+            continue;
+        }
         let username = parts[0];
-        let uid: u32 = match parts[2].parse() { Ok(u) => u, Err(_) => continue };
+        let uid: u32 = match parts[2].parse() {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
         let home = parts[5];
-        if uid < min_uid || uid > max_uid { continue; }
+        if uid < min_uid || uid > max_uid {
+            continue;
+        }
 
         let live_marker = format!("{}/.config/Blue-Environment/.live", home);
         if std::path::Path::new(&live_marker).exists() {
-            info!("Live-mode marker found for user '{}' — auto-login (no password)", username);
+            info!(
+                "Live-mode marker found for user '{}' — auto-login (no password)",
+                username
+            );
             return Some(username.to_string());
         }
     }
@@ -38,33 +51,60 @@ pub async fn find_live_user(state: &Arc<Mutex<DaemonState>>) -> Option<String> {
 pub async fn list_users(state: &Arc<Mutex<DaemonState>>) -> Vec<UserInfo> {
     let (min_uid, max_uid) = {
         let st = state.lock().await;
-        (st.config.minimum_uid.unwrap_or(1000), st.config.maximum_uid.unwrap_or(65533))
+        (
+            st.config.minimum_uid.unwrap_or(1000),
+            st.config.maximum_uid.unwrap_or(65533),
+        )
     };
 
     let passwd = match fs::read_to_string("/etc/passwd") {
         Ok(c) => c,
-        Err(e) => { warn!("Cannot read /etc/passwd: {}", e); return Vec::new(); }
+        Err(e) => {
+            warn!("Cannot read /etc/passwd: {}", e);
+            return Vec::new();
+        }
     };
 
-    let mut users: Vec<UserInfo> = passwd.lines().filter_map(|line| {
-        let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() < 7 { return None; }
-        let username = parts[0].to_string();
-        let uid: u32 = parts[2].parse().ok()?;
-        let home = parts[5].to_string();
-        let shell = parts[6].trim().to_string();
-        let gecos = parts[4].to_string();
+    let mut users: Vec<UserInfo> = passwd
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() < 7 {
+                return None;
+            }
+            let username = parts[0].to_string();
+            let uid: u32 = parts[2].parse().ok()?;
+            let home = parts[5].to_string();
+            let shell = parts[6].trim().to_string();
+            let gecos = parts[4].to_string();
 
-        if uid < min_uid || uid > max_uid { return None; }
-        if shell.ends_with("nologin") || shell.ends_with("false") { return None; }
+            if uid < min_uid || uid > max_uid {
+                return None;
+            }
+            if shell.ends_with("nologin") || shell.ends_with("false") {
+                return None;
+            }
 
-        let realname = gecos.split(',').next().unwrap_or(&username).to_string();
-        let realname = if realname.is_empty() { username.clone() } else { realname };
-        let icon_path = find_user_icon(&username, &home);
-        let last_session = read_last_session(&username);
+            let realname = gecos.split(',').next().unwrap_or(&username).to_string();
+            let realname = if realname.is_empty() {
+                username.clone()
+            } else {
+                realname
+            };
+            let icon_path = find_user_icon(&username, &home);
+            let last_session = read_last_session(&username);
 
-        Some(UserInfo { username, realname, uid, home, shell, icon_path, last_session })
-    }).collect();
+            Some(UserInfo {
+                username,
+                realname,
+                uid,
+                home,
+                shell,
+                icon_path,
+                last_session,
+            })
+        })
+        .collect();
 
     users.sort_by(|a, b| a.username.cmp(&b.username));
     users
@@ -78,12 +118,15 @@ fn find_user_icon(username: &str, home: &str) -> Option<String> {
         format!("/var/lib/AccountsService/icons/{username}"),
         format!("/usr/share/pixmaps/faces/{username}.png"),
     ];
-    candidates.iter().find(|p| std::path::Path::new(*p).exists()).cloned()
+    candidates
+        .iter()
+        .find(|p| std::path::Path::new(*p).exists())
+        .cloned()
 }
 
 fn read_last_session(username: &str) -> Option<String> {
     let path = format!("/var/lib/bedm/users/{}/last_session", username);
-    fs::read_to_string(&path).ok().map(|s| s.trim().to_string())
+    fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }
 
 #[allow(dead_code)]
@@ -113,9 +156,12 @@ pub async fn ensure_guest_account() {
             let _ = std::process::Command::new("useradd")
                 .args([
                     "--no-create-home",
-                    "--home-dir", home,
-                    "--shell", "/bin/bash",
-                    "--comment", "BEDM Guest",
+                    "--home-dir",
+                    home,
+                    "--shell",
+                    "/bin/bash",
+                    "--comment",
+                    "BEDM Guest",
                     "--no-user-group",
                     "guest",
                 ])
@@ -128,9 +174,14 @@ pub async fn ensure_guest_account() {
 
             // Set up minimal home
             let _ = std::fs::create_dir_all(format!("{home}/.config"));
-            let _ = std::fs::write(format!("{home}/.profile"), "export HOME=/tmp/bedm-guest-home\n");
+            let _ = std::fs::write(
+                format!("{home}/.profile"),
+                "export HOME=/tmp/bedm-guest-home\n",
+            );
         }
-    }).await.ok();
+    })
+    .await
+    .ok();
 }
 
 /// Remove the guest account and its home directory on session end.
@@ -139,5 +190,7 @@ pub async fn cleanup_guest_account() {
         tracing::info!("Cleaning up guest account");
         let _ = std::process::Command::new("userdel").arg("guest").status();
         let _ = std::fs::remove_dir_all("/tmp/bedm-guest-home");
-    }).await.ok();
+    })
+    .await
+    .ok();
 }
