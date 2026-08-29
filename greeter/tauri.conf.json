@@ -5,14 +5,14 @@
   "identifier": "org.hackeros.hdm-greeter",
   "build": {
     "beforeDevCommand": "cd ../ui && npm run dev",
-    "beforeBuildCommand": "mkdir -p icons && cp ../../images/icon.png icons/icon.png && cd ../ui && npm run build",
+    "beforeBuildCommand": "mkdir -p icons && cp ../config/images/icon.png icons/icon.png && cd ../ui && npm run build",
     "devUrl": "http://localhost:5174",
     "frontendDist": "../ui/dist"
   },
   "app": {
     "windows": [
       {
-        "title": "BEDM Login",
+        "title": "HDM Login",
         "width": 1280,
         "height": 800,
         "resizable": false,
