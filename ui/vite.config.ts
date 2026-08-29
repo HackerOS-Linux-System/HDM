@@ -1,9 +1,9 @@
 import { defineConfig } from 'vite';
-import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import solid from 'vite-plugin-solid';
 import { resolve } from 'path';
 
 export default defineConfig({
-  plugins: [svelte({ preprocess: vitePreprocess() })],
+  plugins: [solid()],
   root: 'src',
   publicDir: resolve(__dirname, 'public'),
   clearScreen: false,
