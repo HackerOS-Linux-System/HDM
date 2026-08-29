@@ -18,17 +18,16 @@ pub fn switch_to(vt: u8) -> Result<(), String> {
     const VT_ACTIVATE: u64 = 0x5606;
     const VT_WAITACTIVE: u64 = 0x5607;
 
-    let result = unsafe {
-        libc::ioctl(fd.as_raw_fd(), VT_ACTIVATE, vt as i32)
-    };
+    let result = unsafe { libc::ioctl(fd.as_raw_fd(), VT_ACTIVATE, vt as i32) };
 
     if result != 0 {
-        return Err(format!("VT_ACTIVATE failed: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "VT_ACTIVATE failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
-    let result = unsafe {
-        libc::ioctl(fd.as_raw_fd(), VT_WAITACTIVE, vt as i32)
-    };
+    let result = unsafe { libc::ioctl(fd.as_raw_fd(), VT_WAITACTIVE, vt as i32) };
 
     if result != 0 {
         warn!("VT_WAITACTIVE warning: {}", std::io::Error::last_os_error());
@@ -56,11 +55,13 @@ pub fn current_vt() -> Option<u8> {
         .ok()?;
 
     const VT_GETSTATE: u64 = 0x5603;
-    let mut stat = VtStat { v_active: 0, v_signal: 0, v_state: 0 };
-
-    let result = unsafe {
-        libc::ioctl(fd.as_raw_fd(), VT_GETSTATE, &mut stat as *mut VtStat)
+    let mut stat = VtStat {
+        v_active: 0,
+        v_signal: 0,
+        v_state: 0,
     };
+
+    let result = unsafe { libc::ioctl(fd.as_raw_fd(), VT_GETSTATE, &mut stat as *mut VtStat) };
 
     if result == 0 {
         Some(stat.v_active as u8)
