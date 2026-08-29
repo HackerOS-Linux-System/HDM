@@ -3,9 +3,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // These tests run in "dev mock" mode (no window.__TAURI_INTERNALS__ present
 // in jsdom), which exercises the same invoke() timeout/retry wrapper the
 // real Tauri path uses — only the underlying call source differs.
-import { BedmBridge, IpcTimeoutError, IpcValidationError } from './tauri';
+import { HdmBridge, IpcTimeoutError, IpcValidationError } from './tauri';
 
-describe('BedmBridge (dev mock mode)', () => {
+describe('HdmBridge (dev mock mode)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -15,7 +15,7 @@ describe('BedmBridge (dev mock mode)', () => {
   });
 
   it('resolves getUsers with the mock user list', async () => {
-    const promise = BedmBridge.getUsers();
+    const promise = HdmBridge.getUsers();
     await vi.advanceTimersByTimeAsync(300);
     const users = await promise;
     expect(users.length).toBeGreaterThan(0);
@@ -23,14 +23,14 @@ describe('BedmBridge (dev mock mode)', () => {
   });
 
   it('authenticate succeeds for the documented demo password', async () => {
-    const promise = BedmBridge.authenticate('michal', 'demo');
+    const promise = HdmBridge.authenticate('michal', 'demo');
     await vi.advanceTimersByTimeAsync(900);
     const result = await promise;
     expect(result).toMatchObject({ success: true, username: 'michal' });
   });
 
   it('authenticate fails for a wrong password', async () => {
-    const promise = BedmBridge.authenticate('michal', 'not-the-password');
+    const promise = HdmBridge.authenticate('michal', 'not-the-password');
     await vi.advanceTimersByTimeAsync(900);
     const result = await promise;
     expect(result).toMatchObject({ success: false });
@@ -38,16 +38,16 @@ describe('BedmBridge (dev mock mode)', () => {
 
   it('hasFingerprint never throws — resolves false on any underlying error', async () => {
     // has_fingerprint is mocked to always succeed in dev mode, but the
-    // wrapper itself (BedmBridge.hasFingerprint) must never reject —
+    // wrapper itself (HdmBridge.hasFingerprint) must never reject —
     // App.tsx treats a rejected hasFingerprint() as a bug, not a "no
     // fingerprint available" signal.
-    const promise = BedmBridge.hasFingerprint('michal');
+    const promise = HdmBridge.hasFingerprint('michal');
     await vi.advanceTimersByTimeAsync(200);
     await expect(promise).resolves.toBe(true);
   });
 
   it('checkNetwork resolves rather than rejecting when the underlying call fails', async () => {
-    const promise = BedmBridge.checkNetwork();
+    const promise = HdmBridge.checkNetwork();
     await vi.advanceTimersByTimeAsync(100);
     await expect(promise).resolves.toBe(true);
   });
@@ -72,7 +72,7 @@ describe('IpcValidationError', () => {
   });
 });
 
-describe('BedmBridge shape validation (schema wired to every real command)', () => {
+describe('HdmBridge shape validation (schema wired to every real command)', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -82,19 +82,19 @@ describe('BedmBridge shape validation (schema wired to every real command)', () 
   });
 
   it('successfully validates the mock connect_daemon payload against DaemonInfoSchema', async () => {
-    // If BedmBridge.connectDaemon()'s wired-in schema and the dev mock's
+    // If HdmBridge.connectDaemon()'s wired-in schema and the dev mock's
     // payload shape ever drift apart, this rejects instead of silently
     // returning — this is exactly the "daemon and UI disagree on the
     // wire shape" scenario the schema layer exists to catch, exercised
-    // here through the real BedmBridge call path rather than the schema
+    // here through the real HdmBridge call path rather than the schema
     // in isolation (see ipcSchemas.test.ts for that).
-    const promise = BedmBridge.connectDaemon();
+    const promise = HdmBridge.connectDaemon();
     await vi.advanceTimersByTimeAsync(700);
     await expect(promise).resolves.toMatchObject({ hostname: 'legendaryos-pc' });
   });
 
   it('successfully validates the mock getUsers payload against UserInfoListSchema', async () => {
-    const promise = BedmBridge.getUsers();
+    const promise = HdmBridge.getUsers();
     await vi.advanceTimersByTimeAsync(300);
     const users = await promise;
     expect(Array.isArray(users)).toBe(true);
