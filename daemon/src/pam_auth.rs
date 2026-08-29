@@ -179,7 +179,7 @@ pub fn authenticate(username: &str, password: &str) -> Result<(), String> {
 /// sequence of visited cell indices 0-8).
 ///
 /// PAM has no native concept of a pattern, so — like fingerprint below —
-/// this is a BEDM-specific second factor: the pattern is hashed (SHA-256,
+/// this is an HDM-specific second factor: the pattern is hashed (SHA-256,
 /// salted with the username) and compared against
 /// `{home}/.config/Blue-Environment/pattern.hash`, which the user creates
 /// via Settings → Security in Blue Environment (not part of this daemon).
@@ -210,7 +210,7 @@ pub fn authenticate_pattern(username: &str, home: &str, pattern: &[u8]) -> Resul
     }
 }
 
-/// Used by both BEDM (to verify) and Blue Environment Settings (to store,
+/// Used by both HDM (to verify) and Blue Environment Settings (to store,
 /// via the same algorithm) — keep in sync if this ever changes.
 pub fn hash_pattern(username: &str, pattern: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -222,7 +222,7 @@ pub fn hash_pattern(username: &str, pattern: &[u8]) -> String {
 
 fn verify_shadow_password(username: &str, password: &str) -> Result<(), String> {
     let shadow_content = std::fs::read_to_string("/etc/shadow")
-        .map_err(|_| "Cannot read /etc/shadow — BEDM must run as root".to_string())?;
+        .map_err(|_| "Cannot read /etc/shadow — HDM must run as root".to_string())?;
 
     let entry = shadow_content
         .lines()
@@ -254,7 +254,7 @@ fn verify_crypt_hash(password: &str, hash: &str) -> Result<(), String> {
     //
     // Every supported prefix ends up calling the exact same verifier —
     // `crypt.crypt()` auto-detects the algorithm from the hash's own
-    // prefix, so there is nothing format-specific left for BEDM to branch
+    // prefix, so there is nothing format-specific left for HDM to branch
     // on here. The prefix check below exists only to fail fast with a
     // clear, format-aware error rather than a shell error, for prefixes
     // this build does not claim to support.
@@ -274,7 +274,7 @@ fn verify_crypt_hash(password: &str, hash: &str) -> Result<(), String> {
 /// above at least reaches stderr/the log file instead of being silently
 /// dropped.
 fn tracing_or_eprintln(msg: &str) {
-    eprintln!("[bedm-daemon] {}", msg);
+    eprintln!("[hdm-daemon] {}", msg);
 }
 
 /// Use Python hashlib.crypt (available on all glibc systems) to verify.
@@ -322,7 +322,7 @@ pub enum AccountStatus {
 // Public API surface, not yet called from `ipc.rs` — reserved for a future
 // "show a locked-account hint before the user even types a password"
 // UX improvement. Kept (rather than deleted) since `pam_auth` is the
-// module other BEDM tooling (e.g. a future `bedmctl` CLI) would also use.
+// module other HDM tooling (e.g. a future `hdmctl` CLI) would also use.
 #[allow(dead_code)]
 pub fn check_account_status(username: &str) -> AccountStatus {
     let shadow_content = match std::fs::read_to_string("/etc/shadow") {
