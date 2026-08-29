@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 /// Blue Installer live-mode: if `~/.config/Blue-Environment/.live` exists for
-/// any regular user, BEDM treats that user as an autologin target — no
+/// any regular user, HDM treats that user as an autologin target — no
 /// password prompt — exactly like a live-USB session. Blue Installer (the
 /// Svelte app, not this daemon) deletes that file once installation
 /// completes, so the *next* boot goes back to a normal password prompt.
@@ -114,7 +114,7 @@ fn find_user_icon(username: &str, home: &str) -> Option<String> {
     let candidates = [
         format!("{home}/.face"),
         format!("{home}/.face.icon"),
-        format!("{home}/.config/bedm/avatar.png"),
+        format!("{home}/.config/hdm/avatar.png"),
         format!("/var/lib/AccountsService/icons/{username}"),
         format!("/usr/share/pixmaps/faces/{username}.png"),
     ];
@@ -125,13 +125,13 @@ fn find_user_icon(username: &str, home: &str) -> Option<String> {
 }
 
 fn read_last_session(username: &str) -> Option<String> {
-    let path = format!("/var/lib/bedm/users/{}/last_session", username);
+    let path = format!("/var/lib/hdm/users/{}/last_session", username);
     fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }
 
 #[allow(dead_code)]
 pub fn save_last_session(username: &str, session: &str) {
-    let dir = format!("/var/lib/bedm/users/{}", username);
+    let dir = format!("/var/lib/hdm/users/{}", username);
     let _ = fs::create_dir_all(&dir);
     let _ = fs::write(format!("{}/last_session", dir), session);
 }
@@ -149,7 +149,7 @@ pub async fn ensure_guest_account() {
 
         if !exists {
             tracing::info!("Creating temporary guest account");
-            let home = "/tmp/bedm-guest-home";
+            let home = "/tmp/hdm-guest-home";
             let _ = std::fs::create_dir_all(home);
 
             // Create system user (no password, no login shell persistence)
@@ -161,7 +161,7 @@ pub async fn ensure_guest_account() {
                     "--shell",
                     "/bin/bash",
                     "--comment",
-                    "BEDM Guest",
+                    "HDM Guest",
                     "--no-user-group",
                     "guest",
                 ])
@@ -176,7 +176,7 @@ pub async fn ensure_guest_account() {
             let _ = std::fs::create_dir_all(format!("{home}/.config"));
             let _ = std::fs::write(
                 format!("{home}/.profile"),
-                "export HOME=/tmp/bedm-guest-home\n",
+                "export HOME=/tmp/hdm-guest-home\n",
             );
         }
     })
@@ -189,7 +189,7 @@ pub async fn cleanup_guest_account() {
     tokio::task::spawn_blocking(|| {
         tracing::info!("Cleaning up guest account");
         let _ = std::process::Command::new("userdel").arg("guest").status();
-        let _ = std::fs::remove_dir_all("/tmp/bedm-guest-home");
+        let _ = std::fs::remove_dir_all("/tmp/hdm-guest-home");
     })
     .await
     .ok();
