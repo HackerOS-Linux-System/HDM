@@ -21,9 +21,17 @@ serde_json  = "1"
 tokio       = { version = "1", features = ["full"] }
 tracing     = "0.1"
 tracing-subscriber = "0.3"
-dirs        = "5.0"
 chrono      = "0.4"
 base64      = "0.21"
-toml        = "0.8"
+# .hk is HackerOS's own configuration format — see the comment in
+# ../daemon/Cargo.toml. The greeter reads the `[general]` section of
+# /etc/hdm/hdm.hk (wallpaper/theme/clock format/show_user_list) via this
+# same crate, in place of the previous `toml` dependency.
+hk-parser   = "0.3.2"
+indexmap    = "2"
 # Inherit workspace pin (time =0.3.36) — cookie 0.18 needs the 1-arg parse API
 time        = { workspace = true }
+
+# `dirs` (5.0) was previously declared but never imported anywhere in
+# greeter/src/*.rs — removed as unused build weight, same as in the
+# daemon crate.
