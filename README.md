@@ -1,12 +1,12 @@
-# BEDM — Blue Environment Display Manager
+# HDM — HackerOS Display Manager
 
-**BEDM** is a production display manager for Linux, built with:
+**HDM** is a production display manager for Linux, built with:
 - **Rust** daemon (`bedm`) — manages PAM auth, sessions, VT switching
 - **Tauri + React** greeter (`bedm-greeter`) — the login UI
 - **Unix socket IPC** — secure daemon↔greeter communication
 
-BEDM is a rival to SDDM, GDM, and LightDM, designed for the
-[Blue Environment](https://github.com/HackerOS-Linux-System/Blue-Environment)
+HDM is a rival to SDDM, GDM, and LightDM, designed for the
+[Blue Environment](https://github.com/HackerOS-Linux-System/Blue-environment)
 Wayland desktop but works with any session.
 
 ---
@@ -32,7 +32,7 @@ Wayland desktop but works with any session.
 │  TTY1 / VT1                                      │
 │                                                   │
 │  ┌─────────────────────────────────────────────┐ │
-│  │  bedm (daemon, root)                         │ │
+│  │  hdm (daemon, root)                         │ │
 │  │    PAM authentication                        │ │
 │  │    Session launching (drop privs to user)    │ │
 │  │    VT management                             │ │
@@ -40,8 +40,8 @@ Wayland desktop but works with any session.
 │  └───────────────┬─────────────────────────────┘ │
 │                  │ Unix socket (JSON)             │
 │  ┌───────────────▼─────────────────────────────┐ │
-│  │  bedm-greeter (Tauri, runs as _bedm user)   │ │
-│  │    React UI (TypeScript + Tailwind)          │ │
+│  │  hdm-greeter (Tauri, runs as _bedm user)     │ │
+│  │    Solid.js UI (TypeScript + Tailwind)       │ │
 │  │    Clock, user list, password input          │ │
 │  │    Session picker, power menu                │ │
 │  └─────────────────────────────────────────────┘ │
@@ -53,8 +53,8 @@ Wayland desktop but works with any session.
 ## Quick Install
 
 ```bash
-# Clone / extract BEDM
-cd BEDM
+# Clone / extract HDM
+cd HDM
 
 # Build and install (requires Rust + Node.js)
 sudo bash install.sh
@@ -71,50 +71,44 @@ sudo bash install.sh --autologin myusername
 # Install build dependencies (Debian/Ubuntu)
 apt install cargo nodejs npm libpam-dev
 
-# Build
-make build
-
-# Install (as root)
-sudo make install
-
 # Enable
-sudo systemctl enable --now bedm
+sudo systemctl enable --now hdm
 ```
 
 ---
 
 ## Configuration
 
-Edit `/etc/bedm/bedm.toml`:
+Edit `/etc/hdm/hdm.hk`:
 
 ```toml
 [general]
-greeter_path = "/usr/bin/bedm-greeter"
-vt = 1
-theme = "blue"
-show_user_list = true
-allow_root = false
-minimum_uid = 1000
+-> greeter_path => /usr/bin/hdm-greeter
+-> vt => 1
+-> theme => blue
+-> show_user_list => true
+-> allow_root => false
+-> minimum_uid => 1000
 
-# Autologin (optional)
-# autologin_user    = "username"
-# autologin_session = "blue-environment"
+! Autologin (optional)
+! autologin_user    = "username"
+! autologin_session = "blue-environment"
 
 [power]
 shutdown  = "shutdown -h now"
-reboot    = "reboot"
-suspend   = "systemctl suspend"
-hibernate = "systemctl hibernate"
+-> reboot    => reboot"
+-> suspend   => "systemctl suspend"
+-> hibernate => "systemctl hibernate"
 ```
 
 ---
 
 ## User Avatars
 
-BEDM reads user avatars from (in priority order):
+HDM reads user avatars from (in priority order):
 1. `~/.face`
 2. `~/.face.icon`
-3. `~/.config/bedm/avatar.png`
+3. `~/.config/hdm/avatar.png`
 4. `/var/lib/AccountsService/icons/<username>`
 
 ---
@@ -122,12 +116,43 @@ BEDM reads user avatars from (in priority order):
 ## Logs
 
 ```bash
-# View BEDM logs
+# View HDM logs
 journalctl -u bedm -f
 
 # Or from file
-tail -f /var/log/bedm/bedm.log
+tail -f /var/log/hdm/hdm.log
 ```
+
+---
+
+## Security notes
+
+**Content Security Policy.** `greeter/tauri.conf.json` sets a CSP rather
+than leaving it `null`. `style-src` includes `'unsafe-inline'` — this is a
+deliberate, known tradeoff, not an oversight: the greeter UI sets `style="..."`
+attributes at runtime throughout (a carry-over from the original Svelte
+template's inline style bindings, kept for readability of long conditional
+style strings as template literals rather than large object literals).
+Runtime-set inline styles aren't covered by Tauri's automatic build-time
+script/style hashing, so `'unsafe-inline'` is required for the UI to render
+at all under a strict CSP. Everything else (`script-src`, `font-src`,
+`default-src`) is locked to `'self'` with no external origins. If this
+codebase migrates from string styles to `style={{...}}` objects or CSS
+classes/custom properties in the future, `'unsafe-inline'` can be dropped
+from `style-src` entirely.
+
+**Fonts are self-hosted**, not loaded from Google's CDN — see
+`ui/src/fonts.css`. A login screen has to render before networking is
+necessarily up (fresh install, wifi still associating, airgapped
+machines), so BEDM ships its fonts (`@fontsource/oxanium`,
+`@fontsource/dm-sans`, `@fontsource/jetbrains-mono`) as part of the built
+UI bundle instead of fetching them at runtime.
+
+**Authentication rate limiting is enforced server-side**, in
+`daemon/src/pam_auth.rs::RateLimiter`, keyed by username and shared across
+every IPC connection — not just in the greeter UI's own countdown display.
+A client that skips the UI and calls the daemon's IPC commands directly
+still hits the same lockout.
 
 ---
 
