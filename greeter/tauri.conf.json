@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "bedm-greeter",
+  "productName": "hdm-greeter",
   "version": "1.0.0",
-  "identifier": "org.legendaryos.bedm-greeter",
+  "identifier": "org.hackeros.hdm-greeter",
   "build": {
     "beforeDevCommand": "cd ../ui && npm run dev",
     "beforeBuildCommand": "mkdir -p icons && cp ../../images/icon.png icons/icon.png && cd ../ui && npm run build",
