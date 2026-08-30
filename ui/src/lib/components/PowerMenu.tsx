@@ -105,7 +105,10 @@ export default function PowerMenu(props: PowerMenuProps) {
         onClick={(e) => e.stopPropagation()}
         style="border:1px solid rgba(59,130,246,0.2);"
       >
-        <button onClick={() => props.onClose()} class="absolute top-4 right-4 p-2 bedm-btn-ghost rounded-xl">
+        <button
+          onClick={() => props.onClose()}
+          class="absolute top-4 right-4 p-2 hdm-btn-ghost rounded-xl"
+        >
           <X size={16} />
         </button>
 
@@ -132,7 +135,10 @@ export default function PowerMenu(props: PowerMenuProps) {
                         onMouseEnter={(e) => hoverIn(e, item.color, item.glow)}
                         onMouseLeave={hoverOut}
                       >
-                        <Icon size={28} class="text-slate-500 group-hover:scale-110 transition-all" />
+                        <Icon
+                          size={28}
+                          class="text-slate-500 group-hover:scale-110 transition-all"
+                        />
                         <div>
                           <div class="text-slate-300 text-sm font-medium group-hover:text-white transition-colors">
                             {item.label}
@@ -155,7 +161,11 @@ export default function PowerMenu(props: PowerMenuProps) {
                   class="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6"
                   style={`background:radial-gradient(circle, ${sel().glow} 0%, transparent 70%); border:2px solid ${sel().color}30;`}
                 >
-                  <Icon size={36} color={sel().color} style={`filter:drop-shadow(0 0 8px ${sel().color});`} />
+                  <Icon
+                    size={36}
+                    color={sel().color}
+                    style={`filter:drop-shadow(0 0 8px ${sel().color});`}
+                  />
                 </div>
                 <div
                   class="text-6xl font-light tabular-nums mb-2"
@@ -165,7 +175,10 @@ export default function PowerMenu(props: PowerMenuProps) {
                 </div>
                 <p class="text-slate-300 mb-1 text-lg">{sel().label}ing…</p>
                 <p class="text-slate-500 text-sm mb-8">{sel().description}</p>
-                <button onClick={cancel} class="bedm-btn-ghost px-8 py-3 rounded-xl text-sm font-medium">
+                <button
+                  onClick={cancel}
+                  class="hdm-btn-ghost px-8 py-3 rounded-xl text-sm font-medium"
+                >
                   Cancel
                 </button>
               </div>
