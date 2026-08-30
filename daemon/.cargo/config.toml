@@ -1,0 +1,20 @@
+# Overrides Cargo's default workspace behavior of putting every member's
+# build output under a single shared <workspace-root>/target/ directory.
+#
+# The root Cargo.toml declares `[workspace] members = ["daemon", "greeter"]`
+# (needed so `greeter/Cargo.toml`'s `time = { workspace = true }` can pin the
+# same `time` version daemon uses — see the comment in ../Cargo.toml). A side
+# effect of that is: running `cargo build` from *inside* daemon/ still
+# resolves the workspace root and writes to <repo-root>/target/release/hdm,
+# NOT daemon/target/release/hdm — verified empirically, this is standard
+# Cargo behavior, not a bug in Cargo.
+#
+# Every reference to the daemon binary throughout this repo (build.hl,
+# .github/workflows/test.yml, .github/workflows/build.yml, .gitignore)
+# assumes `daemon/target/release/hdm`. Without this override, all of those
+# silently look in the wrong place — which is exactly what broke the
+# "Verify both binaries exist" step in CI ("daemon binary missing", even
+# though `cargo build --release` had just finished successfully one step
+# earlier: the binary existed, just not where anything was looking for it).
+[build]
+target-dir = "target"
