@@ -111,15 +111,21 @@ fn get_bool(map: &IndexMap<String, HkValue>, key: &str) -> Option<bool> {
 }
 
 fn get_u64(map: &IndexMap<String, HkValue>, key: &str) -> Option<u64> {
-    map.get(key).and_then(|v| v.as_number().ok()).map(|n| n as u64)
+    map.get(key)
+        .and_then(|v| v.as_number().ok())
+        .map(|n| n as u64)
 }
 
 fn get_u32(map: &IndexMap<String, HkValue>, key: &str) -> Option<u32> {
-    map.get(key).and_then(|v| v.as_number().ok()).map(|n| n as u32)
+    map.get(key)
+        .and_then(|v| v.as_number().ok())
+        .map(|n| n as u32)
 }
 
 fn get_u8(map: &IndexMap<String, HkValue>, key: &str) -> Option<u8> {
-    map.get(key).and_then(|v| v.as_number().ok()).map(|n| n as u8)
+    map.get(key)
+        .and_then(|v| v.as_number().ok())
+        .map(|n| n as u8)
 }
 
 /// Reads a `.hk` array value as a `Vec<String>`, coercing each element via
@@ -127,9 +133,11 @@ fn get_u8(map: &IndexMap<String, HkValue>, key: &str) -> Option<u8> {
 /// still comes through rather than silently vanishing) and dropping only
 /// elements that are themselves arrays/maps, which have no string form.
 fn get_string_array(map: &IndexMap<String, HkValue>, key: &str) -> Option<Vec<String>> {
-    map.get(key)
-        .and_then(|v| v.as_array().ok())
-        .map(|arr| arr.iter().filter_map(|item| item.as_string().ok()).collect())
+    map.get(key).and_then(|v| v.as_array().ok()).map(|arr| {
+        arr.iter()
+            .filter_map(|item| item.as_string().ok())
+            .collect()
+    })
 }
 
 fn from_hk(config: &HkConfig) -> HdmConfig {
@@ -152,7 +160,9 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
         session_timeout: general
             .and_then(|g| get_u64(g, "session_timeout"))
             .or(defaults.session_timeout),
-        theme: general.and_then(|g| get_string(g, "theme")).or(defaults.theme),
+        theme: general
+            .and_then(|g| get_string(g, "theme"))
+            .or(defaults.theme),
         background: general.and_then(|g| get_string(g, "background")),
         clock_format: general
             .and_then(|g| get_string(g, "clock_format"))
@@ -200,8 +210,7 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
 /// place via `hk_parser::resolve_interpolations`, then converts the parsed
 /// `.hk` tree into a `HdmConfig`.
 pub fn load_config(path: &str) -> Result<HdmConfig, String> {
-    let mut config =
-        load_hk_file(path).map_err(|e| format!("Cannot load {}: {}", path, e))?;
+    let mut config = load_hk_file(path).map_err(|e| format!("Cannot load {}: {}", path, e))?;
     resolve_interpolations(&mut config)
         .map_err(|e| format!(".hk interpolation error in {}: {}", path, e))?;
     Ok(from_hk(&config))
@@ -304,8 +313,7 @@ mod default_config_tests {
     fn packaged_config_file_matches_default_config_content() {
         let packaged_text = std::fs::read_to_string("../config/hdm.hk")
             .expect("../config/hdm.hk should exist relative to the daemon crate root");
-        let packaged =
-            load_config_str(&packaged_text).expect("../config/hdm.hk must be valid .hk");
+        let packaged = load_config_str(&packaged_text).expect("../config/hdm.hk must be valid .hk");
         let builtin = load_config_str(default_config_content())
             .expect("default_config_content() must be valid .hk");
         assert_eq!(
@@ -391,7 +399,10 @@ mod default_config_tests {
 "#,
         )
         .unwrap();
-        assert_eq!(cfg.greeter_path, Some("/opt/hdm/bin/hdm-greeter".to_string()));
+        assert_eq!(
+            cfg.greeter_path,
+            Some("/opt/hdm/bin/hdm-greeter".to_string())
+        );
     }
 
     #[test]
