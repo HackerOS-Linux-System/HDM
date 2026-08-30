@@ -1,166 +1,33 @@
-name: Build & Test
+name: Build
 
-# Runs on every push/PR touching the daemon, the greeter, or the UI, plus a
-# manual trigger. Three independent jobs (daemon / greeter / ui) so a
-# failure in one surface doesn't hide failures in the others, and so
-# they run in parallel rather than one long serial pipeline.
+# Produces the actual downloadable HDM release: the `hdm` (daemon) and
+# `hdm-greeter` (greeter, Tauri v2 — the Solid.js UI is bundled into it via
+# Tauri's asset embedding, so ui/dist is not shipped separately) release
+# binaries, plus the packaging files needed to actually install them
+# (systemd unit, PAM service stub, default config), tarballed up.
+#
+# This is deliberately a SEPARATE workflow from test.yml (fmt/clippy/lint/
+# unit tests): test.yml is a fast correctness gate that runs on every push
+# and PR; this one does a full `--release` build plus a Tauri build with
+# all the GTK/WebKitGTK system dependencies, which takes meaningfully
+# longer and isn't something every PR needs to pay for. It runs:
+#   - on every push to main (so main always has a fresh downloadable build)
+#   - on version tags (v*.*.*), where it also attaches the tarball to a
+#     GitHub Release
+#   - on manual dispatch, for building a one-off from any branch/commit
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ── daemon (Rust, no GUI toolkit deps — pure tokio + std) ─────────────────
-  daemon:
-    name: daemon (cargo fmt / clippy / test)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache cargo registry & build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: daemon
-
-      - name: cargo fmt --check
-        working-directory: daemon
-        run: cargo fmt --check
-
-      # --deny warnings: clippy found real, deny-by-default bugs in this
-      # codebase before (identical if/else branches in pam_auth.rs) — this
-      # flag is what makes clippy actually enforce that class of issue in
-      # CI instead of only warning locally.
-      - name: cargo clippy
-        working-directory: daemon
-        run: cargo clippy --all-targets -- -D warnings
-
-      - name: cargo test
-        working-directory: daemon
-        run: cargo test --all-targets
-
-  # ── greeter (Rust + Tauri v2 — needs the GTK/WebKitGTK dev headers) ───────
-  greeter:
-    name: greeter (cargo fmt / clippy / check)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      # Tauri v2's official Linux CI dependency list — without these,
-      # anything that links webkit2gtk-sys / gtk-sys / javascriptcoregtk-sys
-      # fails at the `cc`/`pkg-config` step, not at a Rust type-checking
-      # step, which is a much more confusing failure to debug from a log.
-      - name: Install Tauri Linux build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            patchelf \
-            build-essential \
-            curl \
-            wget \
-            file
-
-      - name: Cache cargo registry & build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: greeter
-
-      - name: cargo fmt --check
-        working-directory: greeter
-        run: cargo fmt --check
-
-      - name: cargo clippy
-        working-directory: greeter
-        run: cargo clippy --all-targets -- -D warnings
-
-      # `cargo test` (not just `check`) here too: greeter/src/main.rs has
-      # its own unit tests for the system-status parsers (any_interface_up,
-      # parse_battery_info, parse_amixer_volume) that don't need a display
-      # or real hardware to run in CI.
-      - name: cargo test
-        working-directory: greeter
-        run: cargo test --all-targets
-
-  # ── UI (Solid.js) ──────────────────────────────────────────────────────
-  ui:
-    name: ui (lint / test / build)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
-
-      - name: npm ci
-        working-directory: ui
-        run: npm ci
-
-      - name: Formatting check (Prettier)
-        working-directory: ui
-        run: npm run format:check
-
-      - name: Lint (ESLint + eslint-plugin-solid)
-        working-directory: ui
-        run: npm run lint
-
-      - name: Unit tests (Vitest + @solidjs/testing-library)
-        working-directory: ui
-        run: npm run test
-
-      - name: Type-check + production build
-        working-directory: ui
-        run: npm run build
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ui-dist
-          path: ui/dist
-          retention-days: 7
-
-  # Convenience job so branch protection can require one green check
-  # ("all-checks-passed") instead of hand-listing all three matrix jobs by
-  # name, which silently stops protecting anything if a job is renamed.
-  # ── binaries: full release build → downloadable artifact ─────────────────
-  #
-  # The three jobs above are fast correctness gates (fmt/clippy/lint/test).
-  # This job is the actual "build everything into binaries" step: it
-  # produces the real `hdm` (daemon) and `hdm-greeter` (greeter, with the
-  # Solid.js UI bundled into it via Tauri's asset embedding — frontendDist
-  # gets compiled into the executable, so ui/dist is not shipped
-  # separately) executables, plus the packaging files needed to actually
-  # install them (systemd unit, PAM service stub, default config), and
-  # uploads the lot as one tarball. `needs: [daemon, greeter, ui]` means a
-  # broken commit never gets this far — no point spending ~5 extra minutes
-  # on a release build of code that already failed clippy or its tests.
-  binaries:
+  build:
     name: Build release binaries
     runs-on: ubuntu-latest
-    needs: [daemon, greeter, ui]
     steps:
       - uses: actions/checkout@v4
 
@@ -184,8 +51,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: ui/package-lock.json
+          # See test.yml for why this deliberately does NOT use
+          # `cache: npm` / `cache-dependency-path`: that combination
+          # hard-fails the whole step if the lockfile path can't be
+          # resolved, instead of just skipping the cache. Caching is done
+          # manually below for the same reason.
+
+      - name: Cache npm dependencies (ui)
+        uses: actions/cache@v4
+        with:
+          path: ui/node_modules
+          key: ${{ runner.os }}-npm-ui-${{ hashFiles('ui/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-ui-
+
+      - name: Cache npm dependencies (greeter)
+        uses: actions/cache@v4
+        with:
+          path: greeter/node_modules
+          key: ${{ runner.os }}-npm-greeter-${{ hashFiles('greeter/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-greeter-
 
       - name: Cache cargo registry & build artifacts (release profile)
         uses: Swatinem/rust-cache@v2
@@ -204,20 +90,34 @@ jobs:
       # `tauri build`'s beforeBuildCommand (see greeter/tauri.conf.json)
       # does `cd ../ui && npm run build` itself, but it does NOT run
       # `npm install` first — the ui/node_modules tree has to already be
-      # there, or that step fails on the first missing package.
-      - name: npm ci (ui)
+      # there, or that step fails on the first missing package. Same
+      # graceful `npm ci` → `npm install` fallback as test.yml (see the
+      # comment there for why).
+      - name: Install dependencies (ui)
         working-directory: ui
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            echo "::warning::ui/package-lock.json is missing — falling back to 'npm install'."
+            npm install
+          fi
 
-      - name: npm ci (greeter — installs @tauri-apps/cli)
+      - name: Install dependencies (greeter — installs @tauri-apps/cli)
         working-directory: greeter
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            echo "::warning::greeter/package-lock.json is missing — falling back to 'npm install'."
+            npm install
+          fi
 
       # bundle.active is false in tauri.conf.json (see greeter/tauri.conf.json)
-      # — deliberately: HDM ships as raw binaries + a systemd unit +
-      # config, installed by build.hl / a .deb / an .rpm, not as a
-      # self-contained Tauri .AppImage/.deb bundle. `tauri build` with
-      # active:false just compiles the release binary and skips bundling.
+      # — deliberately: HDM ships as raw binaries + a systemd unit + config,
+      # installed by build.hl / a .deb / an .rpm, not as a self-contained
+      # Tauri .AppImage/.deb bundle. `tauri build` with active:false just
+      # compiles the release binary and skips bundling.
       - name: tauri build (greeter — also builds the UI via beforeBuildCommand)
         working-directory: greeter
         run: npx tauri build
@@ -240,13 +140,9 @@ jobs:
 
           cp daemon/target/release/hdm "$OUT/hdm"
           cp greeter/target/release/hdm-greeter "$OUT/hdm-greeter"
-          # The systemd unit lives at config/systemd/hdm.service (there is
-          # no separate top-level "systemd/" directory) — copying "config"
-          # already brings it along, plus the default hdm.hk config and
-          # PAM service file. A separate `cp -r systemd "$OUT/"` here used
-          # to reference a directory that doesn't exist in this repo,
-          # which — combined with `set -euo pipefail` above — failed the
-          # entire release-assembly step on every run.
+          # config/ already contains config/systemd/hdm.service, the
+          # default config/hdm.hk, and config/pam-hdm — there is no
+          # separate top-level systemd/ directory in this repo.
           cp -r config "$OUT/"
           cp README.md LICENSE "$OUT/"
 
@@ -261,25 +157,12 @@ jobs:
           retention-days: 30
 
       # Only on a version tag (e.g. v1.0.0): also attach the tarball to a
-      # GitHub Release so it's downloadable without digging through
-      # Actions run history. Ordinary pushes/PRs only get the Actions
-      # artifact above.
+      # GitHub Release so it's downloadable without digging through Actions
+      # run history. Plain pushes to main only get the Actions artifact
+      # above (a "latest main build", not a public release).
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.ARCHIVE }}
           generate_release_notes: true
-
-  all-checks-passed:
-    name: All checks passed
-    runs-on: ubuntu-latest
-    needs: [daemon, greeter, ui, binaries]
-    if: always()
-    steps:
-      - name: Fail if any dependency job failed
-        run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "One or more required jobs failed."
-            exit 1
-          fi
