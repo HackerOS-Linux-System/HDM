@@ -35,7 +35,7 @@ export default function PatternLock(props: PatternLockProps) {
       Array.from({ length: 9 }, (_, i) => ({
         x: PAD + (i % 3) * STEP,
         y: PAD + Math.floor(i / 3) * STEP,
-      }))
+      })),
     );
   });
 
