@@ -63,7 +63,13 @@ export default function UserCard(props: UserCardProps) {
             style="background:#3b82f6; box-shadow:0 0 8px rgba(59,130,246,0.8);"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <path d="M2 5L4 7L8 3" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+              <path
+                d="M2 5L4 7L8 3"
+                stroke="white"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
           </div>
         </Show>
