@@ -149,7 +149,7 @@ jobs:
   #
   # The three jobs above are fast correctness gates (fmt/clippy/lint/test).
   # This job is the actual "build everything into binaries" step: it
-  # produces the real `bedm` (daemon) and `bedm-greeter` (greeter, with the
+  # produces the real `hdm` (daemon) and `hdm-greeter` (greeter, with the
   # Solid.js UI bundled into it via Tauri's asset embedding — frontendDist
   # gets compiled into the executable, so ui/dist is not shipped
   # separately) executables, plus the packaging files needed to actually
@@ -214,7 +214,7 @@ jobs:
         run: npm ci
 
       # bundle.active is false in tauri.conf.json (see greeter/tauri.conf.json)
-      # — deliberately: BEDM ships as raw binaries + a systemd unit +
+      # — deliberately: HDM ships as raw binaries + a systemd unit +
       # config, installed by build.hl / a .deb / an .rpm, not as a
       # self-contained Tauri .AppImage/.deb bundle. `tauri build` with
       # active:false just compiles the release binary and skips bundling.
@@ -224,9 +224,9 @@ jobs:
 
       - name: Verify both binaries exist and report their sizes
         run: |
-          test -x daemon/target/release/bedm || { echo "::error::daemon binary missing"; exit 1; }
-          test -x greeter/target/release/bedm-greeter || { echo "::error::greeter binary missing"; exit 1; }
-          ls -lh daemon/target/release/bedm greeter/target/release/bedm-greeter
+          test -x daemon/target/release/hdm || { echo "::error::daemon binary missing"; exit 1; }
+          test -x greeter/target/release/hdm-greeter || { echo "::error::greeter binary missing"; exit 1; }
+          ls -lh daemon/target/release/hdm greeter/target/release/hdm-greeter
 
       # ── package everything needed for a real install ───────────────────
       - name: Assemble release directory
@@ -235,12 +235,18 @@ jobs:
           VERSION="$(grep -m1 '^version' daemon/Cargo.toml | sed -E 's/version *= *"(.*)"/\1/')"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-          OUT="bedm-${VERSION}-linux-x86_64"
+          OUT="hdm-${VERSION}-linux-x86_64"
           mkdir -p "$OUT"
 
-          cp daemon/target/release/bedm "$OUT/bedm"
-          cp greeter/target/release/bedm-greeter "$OUT/bedm-greeter"
-          cp -r systemd "$OUT/"
+          cp daemon/target/release/hdm "$OUT/hdm"
+          cp greeter/target/release/hdm-greeter "$OUT/hdm-greeter"
+          # The systemd unit lives at config/systemd/hdm.service (there is
+          # no separate top-level "systemd/" directory) — copying "config"
+          # already brings it along, plus the default hdm.hk config and
+          # PAM service file. A separate `cp -r systemd "$OUT/"` here used
+          # to reference a directory that doesn't exist in this repo,
+          # which — combined with `set -euo pipefail` above — failed the
+          # entire release-assembly step on every run.
           cp -r config "$OUT/"
           cp README.md LICENSE "$OUT/"
 
@@ -250,7 +256,7 @@ jobs:
       - name: Upload binaries artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bedm-linux-x86_64
+          name: hdm-linux-x86_64
           path: ${{ env.ARCHIVE }}
           retention-days: 30
 
