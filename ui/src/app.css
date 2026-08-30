@@ -29,45 +29,45 @@ body {
 }
 
 :root {
-  --bedm-bg: #020812;
-  --bedm-surface: rgba(8, 20, 45, 0.7);
-  --bedm-border: rgba(59, 130, 246, 0.15);
-  --bedm-accent: #3b82f6;
-  --bedm-accent-glow: rgba(59, 130, 246, 0.4);
-  --bedm-text: #e2e8f0;
-  --bedm-muted: #64748b;
-  --bedm-danger: #ef4444;
-  --bedm-success: #22c55e;
+  --hdm-bg: #020812;
+  --hdm-surface: rgba(8, 20, 45, 0.7);
+  --hdm-border: rgba(59, 130, 246, 0.15);
+  --hdm-accent: #3b82f6;
+  --hdm-accent-glow: rgba(59, 130, 246, 0.4);
+  --hdm-text: #e2e8f0;
+  --hdm-muted: #64748b;
+  --hdm-danger: #ef4444;
+  --hdm-success: #22c55e;
 }
 
 /* Glassmorphism card */
 .glass-card {
-  background: var(--bedm-surface);
-  border: 1px solid var(--bedm-border);
+  background: var(--hdm-surface);
+  border: 1px solid var(--hdm-border);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
 }
 
 /* Neon input */
-.bedm-input {
+.hdm-input {
   background: rgba(2, 8, 18, 0.6);
   border: 1px solid rgba(59, 130, 246, 0.2);
   color: #e2e8f0;
   transition: all 0.2s ease;
   outline: none;
 }
-.bedm-input:focus {
+.hdm-input:focus {
   border-color: rgba(59, 130, 246, 0.7);
   box-shadow:
     0 0 0 3px rgba(59, 130, 246, 0.15),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
-.bedm-input::placeholder {
+.hdm-input::placeholder {
   color: #475569;
 }
 
 /* Accent button */
-.bedm-btn-primary {
+.hdm-btn-primary {
   background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
   color: white;
   border: 1px solid rgba(59, 130, 246, 0.5);
@@ -76,29 +76,29 @@ body {
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   transition: all 0.2s ease;
 }
-.bedm-btn-primary:hover:not(:disabled) {
+.hdm-btn-primary:hover:not(:disabled) {
   background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   box-shadow:
     0 6px 32px rgba(37, 99, 235, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.15);
   transform: translateY(-1px);
 }
-.bedm-btn-primary:active:not(:disabled) {
+.hdm-btn-primary:active:not(:disabled) {
   transform: translateY(0);
 }
-.bedm-btn-primary:disabled {
+.hdm-btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 /* Ghost button */
-.bedm-btn-ghost {
+.hdm-btn-ghost {
   background: rgba(255, 255, 255, 0.04);
   color: #94a3b8;
   border: 1px solid rgba(255, 255, 255, 0.07);
   transition: all 0.2s ease;
 }
-.bedm-btn-ghost:hover {
+.hdm-btn-ghost:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #e2e8f0;
   border-color: rgba(255, 255, 255, 0.12);
