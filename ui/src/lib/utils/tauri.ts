@@ -34,7 +34,9 @@ export class IpcError extends Error {
   public cause?: unknown;
 
   constructor(cmd: string, cause: unknown) {
-    super(`HDM IPC call '${cmd}' failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    super(
+      `HDM IPC call '${cmd}' failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
     this.name = 'IpcError';
     this.cause = cause;
   }
@@ -93,7 +95,7 @@ function withTimeout<T>(promise: Promise<T>, cmd: string, timeoutMs: number): Pr
       (e) => {
         clearTimeout(timer);
         reject(e);
-      }
+      },
     );
   });
 }
@@ -138,7 +140,9 @@ async function invoke<T>(cmd: string, args?: unknown, opts: InvokeOptions<T> = {
       }
     }
   }
-  throw lastError instanceof IpcTimeoutError || lastError instanceof IpcError || lastError instanceof IpcValidationError
+  throw lastError instanceof IpcTimeoutError ||
+    lastError instanceof IpcError ||
+    lastError instanceof IpcValidationError
     ? lastError
     : new IpcError(cmd, lastError);
 }
@@ -164,10 +168,18 @@ export const HdmBridge = {
     }),
 
   getSessions: () =>
-    invoke<SessionInfo[]>('get_sessions', undefined, { idempotent: true, retries: 2, schema: SessionInfoListSchema }),
+    invoke<SessionInfo[]>('get_sessions', undefined, {
+      idempotent: true,
+      retries: 2,
+      schema: SessionInfoListSchema,
+    }),
 
   getUsers: () =>
-    invoke<UserInfo[]>('get_users', undefined, { idempotent: true, retries: 2, schema: UserInfoListSchema }),
+    invoke<UserInfo[]>('get_users', undefined, {
+      idempotent: true,
+      retries: 2,
+      schema: UserInfoListSchema,
+    }),
 
   // Auth calls are never retried automatically: a retry could count as a
   // second attempt against the daemon's server-side lockout counter for a
@@ -183,28 +195,39 @@ export const HdmBridge = {
   // Longer timeout: fprintd-verify blocks on the physical sensor and can
   // legitimately take much longer than a typical IPC round-trip.
   authenticateFingerprint: (username: string) =>
-    invoke<AuthResult>('authenticate_fingerprint', { username }, { timeoutMs: 35_000, schema: AuthResultSchema }),
+    invoke<AuthResult>(
+      'authenticate_fingerprint',
+      { username },
+      { timeoutMs: 35_000, schema: AuthResultSchema },
+    ),
 
   /** Real fprintd hardware+enrollment check — see main.rs has_fingerprint(). */
   hasFingerprint: (username: string): Promise<boolean> =>
-    invoke<boolean>('has_fingerprint', { username }, { idempotent: true, retries: 1, schema: z.boolean() }).catch(
-      () => false
-    ),
+    invoke<boolean>(
+      'has_fingerprint',
+      { username },
+      { idempotent: true, retries: 1, schema: z.boolean() },
+    ).catch(() => false),
 
   patternIsConfigured: (username: string, home: string): Promise<boolean> =>
     invoke<boolean>(
       'pattern_is_configured',
       { username, home },
-      { idempotent: true, retries: 1, schema: z.boolean() }
+      { idempotent: true, retries: 1, schema: z.boolean() },
     ).catch(() => false),
 
   // Not retried: starting a session twice would launch two compositors.
   startSession: (username: string, session: string) =>
-    invoke<string>('start_session', { username, session }, { timeoutMs: 20_000, schema: z.string() }),
+    invoke<string>(
+      'start_session',
+      { username, session },
+      { timeoutMs: 20_000, schema: z.string() },
+    ),
 
   // Not retried: a retried shutdown/reboot command is not something you
   // want to accidentally send twice.
-  powerAction: (action: string) => invoke<boolean>('power_action', { action }, { schema: z.boolean() }),
+  powerAction: (action: string) =>
+    invoke<boolean>('power_action', { action }, { schema: z.boolean() }),
 
   getWallpaper: () =>
     invoke<string | null>('get_wallpaper', undefined, {
@@ -213,19 +236,28 @@ export const HdmBridge = {
       schema: z.string().nullable(),
     }),
 
-  getHostname: () => invoke<string>('get_hostname', undefined, { idempotent: true, retries: 2, schema: z.string() }),
+  getHostname: () =>
+    invoke<string>('get_hostname', undefined, { idempotent: true, retries: 2, schema: z.string() }),
 
   getCurrentTime: () =>
-    invoke<string>('get_current_time', undefined, { idempotent: true, retries: 1, schema: z.string() }),
+    invoke<string>('get_current_time', undefined, {
+      idempotent: true,
+      retries: 1,
+      schema: z.string(),
+    }),
 
   getCurrentDate: () =>
-    invoke<string>('get_current_date', undefined, { idempotent: true, retries: 1, schema: z.string() }),
+    invoke<string>('get_current_date', undefined, {
+      idempotent: true,
+      retries: 1,
+      schema: z.string(),
+    }),
 
   readUserAvatar: (path: string) =>
     invoke<string | null>(
       'read_user_avatar',
       { path },
-      { idempotent: true, retries: 2, schema: z.string().nullable() }
+      { idempotent: true, retries: 2, schema: z.string().nullable() },
     ),
 
   // ── New methods added for expanded greeter ────────────────────────────
@@ -243,11 +275,15 @@ export const HdmBridge = {
 
   getBattery: async (): Promise<{ percentage: number; charging: boolean } | null> => {
     try {
-      return await invoke<{ percentage: number; charging: boolean } | null>('get_battery_info', undefined, {
-        idempotent: true,
-        retries: 1,
-        schema: BatteryInfoSchema.nullable(),
-      });
+      return await invoke<{ percentage: number; charging: boolean } | null>(
+        'get_battery_info',
+        undefined,
+        {
+          idempotent: true,
+          retries: 1,
+          schema: BatteryInfoSchema.nullable(),
+        },
+      );
     } catch {
       return null;
     }
@@ -346,7 +382,7 @@ function mockInvoke<T>(cmd: string, args?: unknown): Promise<T> {
             os_name: 'LegendaryOS Linux',
             os_version: '0.2.0-alpha',
             connected: true,
-          }) as unknown as T
+          }) as unknown as T,
       );
 
     case 'get_users':
@@ -378,13 +414,20 @@ function mockInvoke<T>(cmd: string, args?: unknown): Promise<T> {
         const ok = pattern.length === demo.length && pattern.every((v, i) => v === demo[i]);
         return (ok
           ? { success: true, username, error: undefined, attempts_left: 5 }
-          : { success: false, username: undefined, error: 'Pattern not recognised', attempts_left: 4 }) as unknown as T;
+          : {
+              success: false,
+              username: undefined,
+              error: 'Pattern not recognised',
+              attempts_left: 4,
+            }) as unknown as T;
       });
     }
 
     case 'authenticate_fingerprint': {
       const { username } = args as { username: string };
-      return delay(1000).then(() => ({ success: true, username, error: undefined, attempts_left: 5 }) as unknown as T);
+      return delay(1000).then(
+        () => ({ success: true, username, error: undefined, attempts_left: 5 }) as unknown as T,
+      );
     }
 
     case 'has_fingerprint':
