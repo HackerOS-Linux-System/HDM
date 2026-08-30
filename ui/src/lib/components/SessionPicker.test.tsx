@@ -24,26 +24,34 @@ const sessions: SessionInfo[] = [
 
 describe('<SessionPicker />', () => {
   it('renders one row per session with its name', () => {
-    render(() => <SessionPicker sessions={sessions} selected="blue-environment" onSelect={() => {}} />);
+    render(() => (
+      <SessionPicker sessions={sessions} selected="blue-environment" onSelect={() => {}} />
+    ));
     expect(screen.getByText('Blue Environment')).toBeInTheDocument();
     expect(screen.getByText('Openbox')).toBeInTheDocument();
   });
 
   it('labels wayland sessions WL and x11 sessions X11', () => {
-    render(() => <SessionPicker sessions={sessions} selected="blue-environment" onSelect={() => {}} />);
+    render(() => (
+      <SessionPicker sessions={sessions} selected="blue-environment" onSelect={() => {}} />
+    ));
     expect(screen.getByText('WL')).toBeInTheDocument();
     expect(screen.getByText('X11')).toBeInTheDocument();
   });
 
   it('calls onSelect with the session id when a row is clicked', () => {
     const onSelect = vi.fn();
-    render(() => <SessionPicker sessions={sessions} selected="blue-environment" onSelect={onSelect} />);
+    render(() => (
+      <SessionPicker sessions={sessions} selected="blue-environment" onSelect={onSelect} />
+    ));
     fireEvent.click(screen.getByText('Openbox'));
     expect(onSelect).toHaveBeenCalledWith('openbox');
   });
 
   it('omits the comment line when a session has none', () => {
-    render(() => <SessionPicker sessions={sessions} selected="blue-environment" onSelect={() => {}} />);
+    render(() => (
+      <SessionPicker sessions={sessions} selected="blue-environment" onSelect={() => {}} />
+    ));
     expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 });
