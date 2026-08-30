@@ -1,0 +1,205 @@
+name: Tests
+
+# Runs on every push/PR touching the daemon, the greeter, or the UI, plus a
+# manual trigger. Three independent jobs (daemon / greeter / ui) so a
+# failure in one surface doesn't hide failures in the others, and so they
+# run in parallel rather than one long serial pipeline.
+#
+# This workflow is CI quality gates ONLY (fmt / clippy / lint / unit tests).
+# It does not produce a release build or any downloadable artifact — that's
+# build.yml, which only runs after code actually lands (push to main or a
+# version tag) or on manual dispatch.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── daemon (Rust, no GUI toolkit deps — pure tokio + std) ─────────────────
+  daemon:
+    name: daemon (cargo fmt / clippy / test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: daemon
+
+      - name: cargo fmt --check
+        working-directory: daemon
+        run: cargo fmt --check
+
+      # --deny warnings: clippy found real, deny-by-default bugs in this
+      # codebase before (identical if/else branches in pam_auth.rs) — this
+      # flag is what makes clippy actually enforce that class of issue in
+      # CI instead of only warning locally.
+      - name: cargo clippy
+        working-directory: daemon
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: daemon
+        run: cargo test --all-targets
+
+  # ── greeter (Rust + Tauri v2 — needs the GTK/WebKitGTK dev headers) ───────
+  greeter:
+    name: greeter (cargo fmt / clippy / check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Tauri v2's official Linux CI dependency list — without these,
+      # anything that links webkit2gtk-sys / gtk-sys / javascriptcoregtk-sys
+      # fails at the `cc`/`pkg-config` step, not at a Rust type-checking
+      # step, which is a much more confusing failure to debug from a log.
+      - name: Install Tauri Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            patchelf \
+            build-essential \
+            curl \
+            wget \
+            file
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: greeter
+
+      - name: cargo fmt --check
+        working-directory: greeter
+        run: cargo fmt --check
+
+      # NOTE: `tauri::generate_context!()` (called from main.rs) resolves
+      # `bundle.icon` in tauri.conf.json and needs that file to actually
+      # exist at *compile* time — for cargo clippy/check/test, not just
+      # `tauri build`. tauri.conf.json points icon at
+      # "../config/images/icon.png" (a real, always-present file in this
+      # repo) precisely so this step never needs an extra "prepare icons"
+      # step before it — a previous revision pointed it at a generated
+      # "icons/icon.png" that only existed after tauri build's
+      # beforeBuildCommand ran, which made plain `cargo clippy` fail here
+      # with "failed to open icon ... No such file or directory".
+      - name: cargo clippy
+        working-directory: greeter
+        run: cargo clippy --all-targets -- -D warnings
+
+      # `cargo test` (not just `check`) here too: greeter/src/main.rs has
+      # its own unit tests for the system-status parsers (any_interface_up,
+      # parse_battery_info, parse_amixer_volume) that don't need a display
+      # or real hardware to run in CI.
+      - name: cargo test
+        working-directory: greeter
+        run: cargo test --all-targets
+
+  # ── UI (Solid.js) ──────────────────────────────────────────────────────
+  ui:
+    name: ui (lint / test / build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # NOTE: deliberately NOT using `cache: npm` / `cache-dependency-path`
+          # here. actions/setup-node's built-in npm cache HARD-FAILS this
+          # entire step ("Some specified paths were not resolved, unable to
+          # cache dependencies") if the lockfile path doesn't resolve to an
+          # existing file — which is exactly what happened here twice.
+          # ui/package-lock.json and greeter/package-lock.json are committed
+          # to this repo (generated via `npm install --package-lock-only`),
+          # so that *shouldn't* trigger — but this class of failure is bad
+          # enough (it aborts the job before a single line of project code
+          # runs) that caching is done manually below instead, via
+          # actions/cache, which degrades to "no cache hit" rather than
+          # failing the job if a lockfile is ever briefly missing/renamed.
+
+      - name: Cache npm dependencies
+        uses: actions/cache@v4
+        with:
+          path: ui/node_modules
+          key: ${{ runner.os }}-npm-ui-${{ hashFiles('ui/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-ui-
+
+      # `npm ci` requires ui/package-lock.json to exist and match
+      # package.json exactly — it is committed in this repo. If it's ever
+      # missing (e.g. a bad merge), fall back to `npm install` instead of
+      # hard-failing the job, so "ui can't install npm" can never again be
+      # the single point of failure for the whole workflow — it just loses
+      # the reproducible-install guarantee for that one run instead, with a
+      # visible warning.
+      - name: Install dependencies
+        working-directory: ui
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            echo "::warning::ui/package-lock.json is missing — falling back to 'npm install'. Commit the lockfile (npm install --package-lock-only) to fix this properly."
+            npm install
+          fi
+
+      - name: Formatting check (Prettier)
+        working-directory: ui
+        run: npm run format:check
+
+      - name: Lint (ESLint + eslint-plugin-solid)
+        working-directory: ui
+        run: npm run lint
+
+      - name: Unit tests (Vitest + @solidjs/testing-library)
+        working-directory: ui
+        run: npm run test
+
+      - name: Type-check + production build
+        working-directory: ui
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+          retention-days: 7
+
+  # Convenience job so branch protection can require one green check
+  # ("all-checks-passed") instead of hand-listing all three matrix jobs by
+  # name, which silently stops protecting anything if a job is renamed.
+  all-checks-passed:
+    name: All checks passed
+    runs-on: ubuntu-latest
+    needs: [daemon, greeter, ui]
+    if: always()
+    steps:
+      - name: Fail if any dependency job failed
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "One or more required jobs failed."
+            exit 1
+          fi
