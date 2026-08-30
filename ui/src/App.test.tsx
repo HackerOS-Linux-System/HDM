@@ -21,9 +21,9 @@ describe('<App /> smoke test', () => {
   it('shows the connecting screen first, then the user list once the daemon "connects"', async () => {
     render(() => <App />);
 
-    expect(screen.getByText(/Connecting to BEDM daemon/i)).toBeInTheDocument();
+    expect(screen.getByText(/Connecting to HDM daemon/i)).toBeInTheDocument();
 
-    // init()'s BedmBridge.connectDaemon() mock resolves after 600ms, then
+    // init()'s HdmBridge.connectDaemon() mock resolves after 600ms, then
     // getUsers/getSessions/getWallpaper resolve after another ~200ms.
     await vi.advanceTimersByTimeAsync(1000);
 
