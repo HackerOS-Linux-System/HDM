@@ -22,7 +22,9 @@ beforeEach(() => {
 });
 
 function firePointer(el: Element, type: string, clientX: number, clientY: number) {
-  el.dispatchEvent(new PointerEvent(type, { clientX, clientY, bubbles: true, cancelable: true, pointerId: 1 }));
+  el.dispatchEvent(
+    new PointerEvent(type, { clientX, clientY, bubbles: true, cancelable: true, pointerId: 1 }),
+  );
 }
 
 // Dot centers for the default 3x3 grid (PAD=40, STEP=90) mirror the
