@@ -34,6 +34,7 @@ export interface DaemonInfo {
   connected: boolean;
 }
 
-export type Screen = 'connecting' | 'user-select' | 'password' | 'session-select' | 'logging-in' | 'error';
+export type Screen =
+  'connecting' | 'user-select' | 'password' | 'session-select' | 'logging-in' | 'error';
 
 export type PowerAction = 'shutdown' | 'reboot' | 'suspend' | 'hibernate';
