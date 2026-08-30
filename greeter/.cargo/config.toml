@@ -1,0 +1,8 @@
+# Same fix as ../daemon/.cargo/config.toml — see that file for the full
+# explanation. This one matters even more for the greeter crate: `tauri
+# build` invokes `cargo build` under the hood, and every reference to the
+# greeter binary (build.hl, .github/workflows/*.yml, .gitignore) assumes
+# it ends up at greeter/target/release/hdm-greeter, not
+# <repo-root>/target/release/hdm-greeter.
+[build]
+target-dir = "target"
