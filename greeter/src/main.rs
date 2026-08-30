@@ -196,8 +196,7 @@ fn read_general_section(config_path: &str) -> GreeterRawGeneral {
 #[tauri::command]
 fn get_wallpaper() -> Option<String> {
     // Read from HDM config
-    let config_path =
-        std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
+    let config_path = std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
 
     // Try to read background from the TOML config
     let general = read_general_section(&config_path);
@@ -222,8 +221,7 @@ fn get_wallpaper() -> Option<String> {
 
 #[tauri::command]
 fn get_greeter_config() -> GreeterConfig {
-    let config_path =
-        std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
+    let config_path = std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
 
     let general = read_general_section(&config_path);
 
