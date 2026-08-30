@@ -5,7 +5,7 @@
   "identifier": "org.hackeros.hdm-greeter",
   "build": {
     "beforeDevCommand": "cd ../ui && npm run dev",
-    "beforeBuildCommand": "mkdir -p icons && cp ../config/images/icon.png icons/icon.png && cd ../ui && npm run build",
+    "beforeBuildCommand": "cd ../ui && npm run build",
     "devUrl": "http://localhost:5174",
     "frontendDist": "../ui/dist"
   },
@@ -38,7 +38,7 @@
     "active": false,
     "targets": "all",
     "icon": [
-      "icons/icon.png"
+      "../config/images/icon.png"
     ]
   },
   "plugins": {
