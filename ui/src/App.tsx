@@ -34,7 +34,7 @@ import UserCard from './lib/components/UserCard';
 import SessionPicker from './lib/components/SessionPicker';
 import PowerMenu from './lib/components/PowerMenu';
 import PatternLock from './lib/components/PatternLock';
-import { BedmBridge } from './lib/utils/tauri';
+import { HdmBridge } from './lib/utils/tauri';
 import type { DaemonInfo, UserInfo, SessionInfo, Screen, PowerAction } from './lib/types';
 
 interface KeyboardLayout {
@@ -117,13 +117,13 @@ export default function App() {
   async function init() {
     setScreen('connecting');
     try {
-      const daemonInfo = await BedmBridge.connectDaemon();
+      const daemonInfo = await HdmBridge.connectDaemon();
       setDaemon(daemonInfo);
 
       const [usersData, sessionsData, wp] = await Promise.all([
-        BedmBridge.getUsers(),
-        BedmBridge.getSessions(),
-        BedmBridge.getWallpaper(),
+        HdmBridge.getUsers(),
+        HdmBridge.getSessions(),
+        HdmBridge.getWallpaper(),
       ]);
 
       setUsers(usersData);
@@ -131,13 +131,14 @@ export default function App() {
       setWallpaper(wp);
       setShowGuestOption(usersData.some((u) => u.username === 'guest'));
 
-      const defaultSession = sessionsData.find((s) => s.id === 'blue-environment') ?? sessionsData[0];
+      const defaultSession =
+        sessionsData.find((s) => s.id === 'blue-environment') ?? sessionsData[0];
       if (defaultSession) setSelectedSession(defaultSession.id);
 
       loadAvatars(usersData);
       setScreen('user-select');
     } catch (e: any) {
-      setConnectError(e?.message ?? 'Cannot connect to BEDM daemon. Is it running as root?');
+      setConnectError(e?.message ?? 'Cannot connect to HDM daemon. Is it running as root?');
       setScreen('error');
     }
   }
@@ -146,7 +147,7 @@ export default function App() {
     for (const user of usersData) {
       if (user.icon_path) {
         try {
-          const data = await BedmBridge.readUserAvatar(user.icon_path);
+          const data = await HdmBridge.readUserAvatar(user.icon_path);
           if (data) setAvatars((prev) => ({ ...prev, [user.username]: data }));
         } catch {
           /* ignore */
@@ -157,12 +158,12 @@ export default function App() {
 
   async function pollSystemStatus() {
     try {
-      setNetworkOk((await BedmBridge.checkNetwork?.()) ?? null);
+      setNetworkOk((await HdmBridge.checkNetwork?.()) ?? null);
     } catch {
       /* ignore */
     }
     try {
-      const bat = await BedmBridge.getBattery?.();
+      const bat = await HdmBridge.getBattery?.();
       if (bat) {
         setBatteryPct(bat.percentage);
         setBatteryCharging(bat.charging);
@@ -171,7 +172,7 @@ export default function App() {
       /* ignore */
     }
     try {
-      const vol = await BedmBridge.getVolume?.();
+      const vol = await HdmBridge.getVolume?.();
       if (vol != null) setVolume(vol);
     } catch {
       /* ignore */
@@ -219,8 +220,10 @@ export default function App() {
     // Real hardware/config checks — not placeholders. If a laptop has no
     // fingerprint reader (or this user never enrolled one), the option is
     // simply not offered instead of showing a button that can't work.
-    setFingerprintAvailable(await BedmBridge.hasFingerprint(user.username).catch(() => false));
-    setPatternAvailable(await BedmBridge.patternIsConfigured(user.username, user.home).catch(() => false));
+    setFingerprintAvailable(await HdmBridge.hasFingerprint(user.username).catch(() => false));
+    setPatternAvailable(
+      await HdmBridge.patternIsConfigured(user.username, user.home).catch(() => false),
+    );
 
     setScreen('password');
     focusPasswordSoon();
@@ -263,7 +266,7 @@ export default function App() {
     setAuthError(null);
 
     try {
-      const result = await BedmBridge.authenticate(selectedUser()!.username, password());
+      const result = await HdmBridge.authenticate(selectedUser()!.username, password());
       setPassword('');
       const ok = handleAuthOutcome(result);
       if (!ok && failCount() < LOCKOUT_AFTER_ATTEMPTS) focusPasswordSoon(100);
@@ -282,7 +285,7 @@ export default function App() {
     setAuthError(null);
     setPatternError(false);
     try {
-      const result = await BedmBridge.authenticatePattern(selectedUser()!.username, pattern);
+      const result = await HdmBridge.authenticatePattern(selectedUser()!.username, pattern);
       const ok = handleAuthOutcome(result);
       if (!ok) setPatternError(true);
       setTimeout(() => setPatternError(false), 600);
@@ -301,7 +304,7 @@ export default function App() {
     try {
       // This call blocks (real hardware scan) until the daemon's
       // fprintd-verify subprocess returns a match/no-match/timeout.
-      const result = await BedmBridge.authenticateFingerprint(selectedUser()!.username);
+      const result = await HdmBridge.authenticateFingerprint(selectedUser()!.username);
       handleAuthOutcome(result);
     } catch (e: any) {
       setAuthError(e?.message ?? 'Fingerprint authentication error');
@@ -313,7 +316,7 @@ export default function App() {
   async function launchSession(username: string, sessionId: string) {
     setScreen('logging-in');
     try {
-      await BedmBridge.startSession(username, sessionId);
+      await HdmBridge.startSession(username, sessionId);
     } catch (e: any) {
       setAuthError(e?.message ?? 'Session failed to start');
       setScreen('password');
@@ -331,13 +334,13 @@ export default function App() {
 
   async function handlePower(action: PowerAction) {
     setShowPowerMenu(false);
-    await BedmBridge.powerAction(action);
+    await HdmBridge.powerAction(action);
   }
 
   function changeKbLayout(layout: KeyboardLayout) {
     setKbLayout(layout);
     setShowLayoutPicker(false);
-    BedmBridge.setKeyboardLayout?.(layout.id).catch(() => {});
+    HdmBridge.setKeyboardLayout?.(layout.id).catch(() => {});
   }
 
   const currentSession = createMemo(() => sessions().find((s) => s.id === selectedSession()));
@@ -361,7 +364,8 @@ export default function App() {
           : BatteryFull;
 
   const rootStyle = createMemo(
-    () => `font-size:${fontSize()}px; ${highContrast() ? 'filter:contrast(1.4) saturate(0.7);' : ''}`
+    () =>
+      `font-size:${fontSize()}px; ${highContrast() ? 'filter:contrast(1.4) saturate(0.7);' : ''}`,
   );
 
   function isWayland(type?: string) {
@@ -402,8 +406,11 @@ export default function App() {
           >
             <Shield size={14} class="text-white" />
           </div>
-          <span class="text-slate-500 text-xs tracking-[0.18em] uppercase" style="font-family:'Oxanium',monospace;">
-            BEDM
+          <span
+            class="text-slate-500 text-xs tracking-[0.18em] uppercase"
+            style="font-family:'Oxanium',monospace;"
+          >
+            HDM
           </span>
           <Show when={daemon()}>
             <span class="text-slate-700 text-xs" style="font-family:'JetBrains Mono',monospace;">
@@ -447,7 +454,11 @@ export default function App() {
                   <Icon
                     size={14}
                     class={
-                      batteryCharging() ? 'text-green-500' : batteryPct()! < 20 ? 'text-red-500' : 'text-slate-500'
+                      batteryCharging()
+                        ? 'text-green-500'
+                        : batteryPct()! < 20
+                          ? 'text-red-500'
+                          : 'text-slate-500'
                     }
                   />
                 );
@@ -518,7 +529,10 @@ export default function App() {
           </button>
 
           <Show when={daemon()}>
-            <span class="text-[11px] text-slate-700" style="font-family:'JetBrains Mono',monospace;">
+            <span
+              class="text-[11px] text-slate-700"
+              style="font-family:'JetBrains Mono',monospace;"
+            >
               {daemon()!.hostname}
             </span>
           </Show>
@@ -527,7 +541,7 @@ export default function App() {
 
       <button
         onClick={() => setShowPowerMenu(true)}
-        class="absolute bottom-6 right-6 z-20 p-3 rounded-xl bedm-btn-ghost group"
+        class="absolute bottom-6 right-6 z-20 p-3 rounded-xl hdm-btn-ghost group"
         title="Power Options"
       >
         <Power size={18} class="text-slate-500 group-hover:text-red-400 transition-colors" />
@@ -551,7 +565,9 @@ export default function App() {
           class="flex flex-col items-center justify-center px-4"
           style="min-height:100%; gap:clamp(0.75rem, 2.5vh, 2rem); padding-top:4rem; padding-bottom:4rem;"
         >
-          <Show when={screen() !== 'logging-in' && screen() !== 'connecting' && screen() !== 'error'}>
+          <Show
+            when={screen() !== 'logging-in' && screen() !== 'connecting' && screen() !== 'error'}
+          >
             <Clock class="animate-fade-in" />
           </Show>
 
@@ -564,12 +580,15 @@ export default function App() {
                 <Shield size={36} class="text-white" />
               </div>
               <div class="text-center">
-                <div class="text-white text-2xl mb-2" style="font-family:'Oxanium',monospace; font-weight:400;">
+                <div
+                  class="text-white text-2xl mb-2"
+                  style="font-family:'Oxanium',monospace; font-weight:400;"
+                >
                   Blue Environment
                 </div>
                 <div class="text-slate-500 text-sm flex items-center gap-2 justify-center">
                   <Loader2 size={14} class="animate-spin" />
-                  Connecting to BEDM daemon…
+                  Connecting to HDM daemon…
                 </div>
               </div>
             </div>
@@ -584,24 +603,27 @@ export default function App() {
                 <AlertCircle size={28} class="text-red-400" />
               </div>
               <div class="text-center max-w-sm">
-                <div class="text-white text-lg mb-2">BEDM Connection Failed</div>
+                <div class="text-white text-lg mb-2">HDM Connection Failed</div>
                 <div class="text-slate-400 text-sm leading-relaxed">{connectError()}</div>
               </div>
               <div class="flex gap-3">
-                <button onClick={init} class="bedm-btn-primary px-5 py-2.5 rounded-xl text-sm flex items-center gap-2">
+                <button
+                  onClick={init}
+                  class="hdm-btn-primary px-5 py-2.5 rounded-xl text-sm flex items-center gap-2"
+                >
                   <RefreshCw size={14} />
                   Retry
                 </button>
                 <button
-                  onClick={() => BedmBridge.powerAction('shutdown')}
-                  class="px-5 py-2.5 rounded-xl text-sm text-slate-400 hover:text-white bedm-btn-ghost"
+                  onClick={() => HdmBridge.powerAction('shutdown')}
+                  class="px-5 py-2.5 rounded-xl text-sm text-slate-400 hover:text-white hdm-btn-ghost"
                 >
                   Shut Down
                 </button>
               </div>
               <p class="text-slate-700 text-xs max-w-xs text-center">
-                Ensure <code class="text-slate-500">bedm-daemon</code> is running as root. Check{' '}
-                <code class="text-slate-500">/var/log/bedm/</code> for errors.
+                Ensure <code class="text-slate-500">hdm-daemon</code> is running as root. Check{' '}
+                <code class="text-slate-500">/var/log/hdm/</code> for errors.
               </p>
             </div>
           </Show>
@@ -675,7 +697,7 @@ export default function App() {
                 <Show when={showGuestOption()}>
                   <button
                     onClick={loginAsGuest}
-                    class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-slate-500 hover:text-slate-300 bedm-btn-ghost"
+                    class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm text-slate-500 hover:text-slate-300 hdm-btn-ghost"
                   >
                     <UserPlus size={14} />
                     Continue as Guest
@@ -685,7 +707,7 @@ export default function App() {
                 <div class="w-full pt-3 border-t border-white/5">
                   <button
                     onClick={() => setShowSessionPicker(!showSessionPicker())}
-                    class="w-full flex items-center justify-between px-4 py-2.5 rounded-xl bedm-btn-ghost"
+                    class="w-full flex items-center justify-between px-4 py-2.5 rounded-xl hdm-btn-ghost"
                   >
                     <div class="flex items-center gap-2 text-sm text-slate-400">
                       <Monitor size={14} />
@@ -779,11 +801,16 @@ export default function App() {
                 </Show>
 
                 <Show when={(patternAvailable() || fingerprintAvailable()) && !isLockedOut()}>
-                  <div class="flex gap-1 p-1 rounded-xl w-full" style="background:rgba(8,20,45,0.5);">
+                  <div
+                    class="flex gap-1 p-1 rounded-xl w-full"
+                    style="background:rgba(8,20,45,0.5);"
+                  >
                     <button
                       onClick={() => setAuthMethod('password')}
                       class={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                        authMethod() === 'password' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'
+                        authMethod() === 'password'
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-500 hover:text-slate-300'
                       }`}
                     >
                       Password
@@ -792,7 +819,9 @@ export default function App() {
                       <button
                         onClick={() => setAuthMethod('pattern')}
                         class={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          authMethod() === 'pattern' ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-300'
+                          authMethod() === 'pattern'
+                            ? 'bg-blue-600 text-white'
+                            : 'text-slate-500 hover:text-slate-300'
                         }`}
                       >
                         Pattern
@@ -826,7 +855,7 @@ export default function App() {
                         onInput={(e) => setPassword(e.currentTarget.value)}
                         onKeyDown={handleKeyDown}
                         placeholder="Password"
-                        class="bedm-input w-full px-4 py-3 rounded-xl pr-12 text-sm"
+                        class="hdm-input w-full px-4 py-3 rounded-xl pr-12 text-sm"
                         style="font-family:'DM Sans',sans-serif;"
                         autofocus
                         disabled={isAuthenticating() || isLockedOut()}
@@ -836,7 +865,10 @@ export default function App() {
                         onClick={() => setShowPassword(!showPassword())}
                         class="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-white/5"
                       >
-                        <Show when={showPassword()} fallback={<Eye size={15} class="text-slate-600" />}>
+                        <Show
+                          when={showPassword()}
+                          fallback={<Eye size={15} class="text-slate-600" />}
+                        >
                           <EyeOff size={15} class="text-slate-600" />
                         </Show>
                       </button>
@@ -855,7 +887,7 @@ export default function App() {
                     <button
                       onClick={authenticate}
                       disabled={!password() || isAuthenticating() || isLockedOut()}
-                      class="bedm-btn-primary w-full py-3 rounded-xl font-medium text-sm flex items-center justify-center gap-2"
+                      class="hdm-btn-primary w-full py-3 rounded-xl font-medium text-sm flex items-center justify-center gap-2"
                     >
                       <Show
                         when={!isAuthenticating()}
@@ -908,7 +940,10 @@ export default function App() {
                         border:2px solid ${isAuthenticating() ? '#3b82f6' : 'rgba(59,130,246,0.3)'};
                       `}
                     >
-                      <Show when={isAuthenticating()} fallback={<Fingerprint size={32} class="text-blue-400" />}>
+                      <Show
+                        when={isAuthenticating()}
+                        fallback={<Fingerprint size={32} class="text-blue-400" />}
+                      >
                         <Loader2 size={32} class="text-blue-400 animate-spin" />
                       </Show>
                     </button>
@@ -927,7 +962,7 @@ export default function App() {
                 <div class="w-full border-t border-white/5 pt-3">
                   <button
                     onClick={() => setShowSessionPicker(!showSessionPicker())}
-                    class="w-full flex items-center justify-between px-3 py-2 rounded-xl bedm-btn-ghost text-sm"
+                    class="w-full flex items-center justify-between px-3 py-2 rounded-xl hdm-btn-ghost text-sm"
                   >
                     <div class="flex items-center gap-2 text-slate-500">
                       <Monitor size={13} />
