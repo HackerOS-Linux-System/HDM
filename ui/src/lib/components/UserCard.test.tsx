@@ -27,7 +27,9 @@ describe('<UserCard />', () => {
   });
 
   it('renders an <img> instead of initials when avatarData is provided', () => {
-    render(() => <UserCard user={user} avatarData="data:image/png;base64,AAAA" onClick={() => {}} />);
+    render(() => (
+      <UserCard user={user} avatarData="data:image/png;base64,AAAA" onClick={() => {}} />
+    ));
     const img = screen.getByAltText('michal') as HTMLImageElement;
     expect(img).toBeInTheDocument();
     expect(img.src).toContain('data:image/png;base64,AAAA');
