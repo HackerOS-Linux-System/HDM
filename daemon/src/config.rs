@@ -1,4 +1,4 @@
-use hk_parser::{load_hk_file, parse_hk, resolve_interpolations, HkConfig, HkValue};
+use hk_parser::{parse_hk, resolve_interpolations, HkConfig, HkValue};
 use indexmap::IndexMap;
 use std::fs;
 use tracing::warn;
@@ -204,22 +204,25 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-/// Loads `/etc/hdm/hdm.hk` (or whatever `path` points at) from disk via
-/// `hk_parser::load_hk_file`, resolves any `${...}` interpolations
-/// (references to other keys and `${env:VAR}` environment lookups) in
-/// place via `hk_parser::resolve_interpolations`, then converts the parsed
-/// `.hk` tree into a `HdmConfig`.
+/// Loads `/etc/hdm/hdm.hk` (or whatever `path` points at) from disk,
+/// resolves any `${...}` interpolations (references to other keys and
+/// `${env:VAR}` environment lookups) via `hk_parser::resolve_interpolations`,
+/// then converts the parsed `.hk` tree into a `HdmConfig`.
+///
+/// Implemented on top of `load_config_str` (reading the file ourselves
+/// rather than calling `hk_parser::load_hk_file` directly) so there is a
+/// single code path for turning `.hk` text into a `HdmConfig` — used here
+/// for real config files on disk, and directly by the test suite /
+/// `default_config_content()` for in-memory strings.
 pub fn load_config(path: &str) -> Result<HdmConfig, String> {
-    let mut config = load_hk_file(path).map_err(|e| format!("Cannot load {}: {}", path, e))?;
-    resolve_interpolations(&mut config)
-        .map_err(|e| format!(".hk interpolation error in {}: {}", path, e))?;
-    Ok(from_hk(&config))
+    let content =
+        std::fs::read_to_string(path).map_err(|e| format!("Cannot load {}: {}", path, e))?;
+    load_config_str(&content).map_err(|e| format!("{} (in {})", e, path))
 }
 
-/// Same as `load_config`, but parses an in-memory string instead of
-/// reading from disk — used for `default_config_content()` (below) and by
-/// the test suite, so both can be exercised without touching the
-/// filesystem.
+/// Parses `.hk` text directly (no filesystem access) into a `HdmConfig`.
+/// Used by `load_config` above, by `default_config_content()`'s own
+/// self-test, and throughout the test suite.
 pub fn load_config_str(content: &str) -> Result<HdmConfig, String> {
     let mut config = parse_hk(content).map_err(|e| format!(".hk parse error: {}", e))?;
     resolve_interpolations(&mut config).map_err(|e| format!(".hk interpolation error: {}", e))?;
