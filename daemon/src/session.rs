@@ -49,7 +49,7 @@ pub async fn list_sessions(state: &Arc<Mutex<DaemonState>>) -> Vec<SessionInfo> 
         };
         for entry in read_dir.flatten() {
             let path = entry.path();
-            if path.extension().map_or(false, |e| e == "desktop") {
+            if path.extension().is_some_and(|e| e == "desktop") {
                 if let Some(info) = parse_session_desktop(&path, session_type) {
                     sessions.push(info);
                 }
