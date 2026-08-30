@@ -49,7 +49,13 @@ describe('ipcSchemas', () => {
   describe('UserInfoListSchema', () => {
     it('accepts a list of well-formed users, with optional fields omitted', () => {
       const result = UserInfoListSchema.safeParse([
-        { username: 'alice', realname: 'Alice', uid: 1000, home: '/home/alice', shell: '/bin/bash' },
+        {
+          username: 'alice',
+          realname: 'Alice',
+          uid: 1000,
+          home: '/home/alice',
+          shell: '/bin/bash',
+        },
       ]);
       expect(result.success).toBe(true);
     });
@@ -70,12 +76,20 @@ describe('ipcSchemas', () => {
 
   describe('AuthResultSchema', () => {
     it('accepts a successful auth result', () => {
-      const result = AuthResultSchema.safeParse({ success: true, username: 'alice', attempts_left: 5 });
+      const result = AuthResultSchema.safeParse({
+        success: true,
+        username: 'alice',
+        attempts_left: 5,
+      });
       expect(result.success).toBe(true);
     });
 
     it('accepts a failed auth result with an error message and no username', () => {
-      const result = AuthResultSchema.safeParse({ success: false, error: 'Incorrect password', attempts_left: 3 });
+      const result = AuthResultSchema.safeParse({
+        success: false,
+        error: 'Incorrect password',
+        attempts_left: 3,
+      });
       expect(result.success).toBe(true);
     });
 
