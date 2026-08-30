@@ -33,13 +33,19 @@ export default function SessionPicker(props: SessionPickerProps) {
                 class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                 style={`background:${isSelected() ? 'rgba(59,130,246,0.2)' : 'rgba(255,255,255,0.05)'};`}
               >
-                <Show when={isWayland} fallback={<Globe size={16} color={isSelected() ? '#60a5fa' : '#475569'} />}>
+                <Show
+                  when={isWayland}
+                  fallback={<Globe size={16} color={isSelected() ? '#60a5fa' : '#475569'} />}
+                >
                   <Monitor size={16} color={isSelected() ? '#60a5fa' : '#475569'} />
                 </Show>
               </div>
 
               <div class="flex-1 min-w-0">
-                <div class="text-sm font-medium truncate" style={`color:${isSelected() ? '#e2e8f0' : '#94a3b8'};`}>
+                <div
+                  class="text-sm font-medium truncate"
+                  style={`color:${isSelected() ? '#e2e8f0' : '#94a3b8'};`}
+                >
                   {session.name}
                 </div>
                 <Show when={session.comment}>
@@ -62,7 +68,10 @@ export default function SessionPicker(props: SessionPickerProps) {
               </span>
 
               <Show when={isSelected()}>
-                <div class="w-5 h-5 rounded-full flex items-center justify-center shrink-0" style="background:#3b82f6;">
+                <div
+                  class="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                  style="background:#3b82f6;"
+                >
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path
                       d="M2 5L4 7L8 3"
