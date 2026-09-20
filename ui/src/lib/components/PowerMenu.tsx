@@ -29,8 +29,8 @@ const ACTIONS = [
     action: 'suspend' as PowerAction,
     label: 'Suspend',
     Icon: Moon,
-    color: '#3b82f6',
-    glow: 'rgba(59,130,246,0.3)',
+    color: '#d4d4d8',
+    glow: 'rgba(212,212,216,0.3)',
     description: 'Sleep — resume quickly',
   },
   {
