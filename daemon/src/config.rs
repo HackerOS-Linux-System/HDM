@@ -40,8 +40,10 @@ impl Default for HdmConfig {
             autologin_session: None,
             autologin_delay: Some(0),
             session_timeout: Some(0),
-            theme: Some("blue".to_string()),
-            background: None,
+            theme: Some("graphite".to_string()),
+            background: Some(
+                "/usr/share/wallpapers/HackerOS-Wallpapers/Wallpaper23.png".to_string(),
+            ),
             clock_format: Some("%H:%M".to_string()),
             show_user_list: Some(true),
             allow_root: Some(false),
@@ -163,7 +165,9 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
         theme: general
             .and_then(|g| get_string(g, "theme"))
             .or(defaults.theme),
-        background: general.and_then(|g| get_string(g, "background")),
+        background: general
+            .and_then(|g| get_string(g, "background"))
+            .or(defaults.background),
         clock_format: general
             .and_then(|g| get_string(g, "clock_format"))
             .or(defaults.clock_format),
@@ -251,7 +255,8 @@ pub fn default_config_content() -> &'static str {
 [general]
 -> greeter_path   => "/usr/bin/hdm-greeter"
 -> vt             => 1
--> theme          => blue
+-> theme          => graphite
+-> background     => "/usr/share/wallpapers/HackerOS-Wallpapers/Wallpaper23.png"
 -> show_user_list => true
 -> allow_root     => false
 -> allow_guest    => false
@@ -348,6 +353,12 @@ mod default_config_tests {
         assert_eq!(cfg.vt, HdmConfig::default().vt);
         assert_eq!(cfg.minimum_uid, HdmConfig::default().minimum_uid);
         assert_eq!(cfg.power, HdmConfig::default().power);
+        // `background` used to be the one field in `from_hk` that didn't
+        // fall back to `HdmConfig::default()` when the key was absent —
+        // an old /etc/hdm/hdm.hk with no `background` line would silently
+        // get no wallpaper at all instead of the packaged default. Guard
+        // against that regressing.
+        assert_eq!(cfg.background, HdmConfig::default().background);
     }
 
     #[test]
