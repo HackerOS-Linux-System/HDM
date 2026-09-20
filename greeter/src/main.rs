@@ -156,6 +156,15 @@ async fn power_action(
     client.power_action(&action).await
 }
 
+/// HDM's built-in literal defaults for the handful of `[general]` fields
+/// the greeter reads. Used both to fill `default_config_content()`-style
+/// text for the per-user config layer below, and as the final fallback
+/// once neither /etc/hdm/hdm.hk nor ~/.config/hdm/hdm.hk sets a value —
+/// kept in sync with `HdmConfig::default()` in ../daemon/src/config.rs.
+const DEFAULT_THEME: &str = "graphite";
+const DEFAULT_WALLPAPER: &str = "/usr/share/wallpapers/HackerOS-Wallpapers/Wallpaper23.png";
+const DEFAULT_CLOCK_FORMAT: &str = "%H:%M";
+
 #[derive(Default)]
 struct GreeterRawGeneral {
     background: Option<String>,
@@ -164,8 +173,8 @@ struct GreeterRawGeneral {
     show_user_list: Option<bool>,
 }
 
-/// Reads just the `[general]` section of `/etc/hdm/hdm.hk` (HackerOS's
-/// `.hk` config format — see the comment above `hk-parser` in Cargo.toml)
+/// Reads just the `[general]` section of a `.hk` file (HackerOS's own
+/// config format — see the comment above `hk-parser` in Cargo.toml)
 /// for the handful of display fields the greeter itself needs
 /// (wallpaper/theme/clock format/show_user_list). This intentionally does
 /// NOT go through `hk_parser::resolve_interpolations` — the greeter only
@@ -173,7 +182,9 @@ struct GreeterRawGeneral {
 /// filesystem path, not something that references other keys), and
 /// skipping it keeps this a pure, allocation-light read with no risk of
 /// surfacing a cyclic/invalid-reference error from an unrelated section of
-/// the daemon's config file just to render a login screen.
+/// the daemon's config file just to render a login screen. Used for both
+/// the system config (/etc/hdm/hdm.hk) and the per-user layer below —
+/// same format, same parser, just a different path.
 fn read_general_section(config_path: &str) -> GreeterRawGeneral {
     let Some(content) = std::fs::read_to_string(config_path).ok() else {
         return GreeterRawGeneral::default();
@@ -193,24 +204,133 @@ fn read_general_section(config_path: &str) -> GreeterRawGeneral {
     }
 }
 
+/// Where the per-user, second layer of default settings lives:
+/// `$XDG_CONFIG_HOME/hdm/hdm.hk`, falling back to `~/.config/hdm/hdm.hk`
+/// per the XDG Base Directory spec (this is genuine, user-editable
+/// *configuration*, not disposable data, so `~/.cache` was not the right
+/// call here). `None` if neither `$XDG_CONFIG_HOME` nor `$HOME` is set —
+/// e.g. the daemon-spawned greeter running as root pre-login, which has
+/// no meaningful personal config directory of its own anyway.
+fn user_config_path() -> Option<std::path::PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(std::path::PathBuf::from(xdg).join("hdm/hdm.hk"));
+        }
+    }
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(|home| std::path::PathBuf::from(home).join(".config/hdm/hdm.hk"))
+}
+
+/// The text written to a fresh `~/.config/hdm/hdm.hk` — the same
+/// `[general]` keys and the same default values as the packaged
+/// `/etc/hdm/hdm.hk` (see `config/hdm.hk` / `default_config_content()` in
+/// ../daemon/src/config.rs), just somewhere a regular user — or a
+/// contributor running `hl build.hl dev-greeter` without root — can edit
+/// it directly.
+fn user_default_config_content() -> String {
+    format!(
+        "! ~/.config/hdm/hdm.hk — per-user HDM greeter defaults\n\
+         !\n\
+         ! Format: .hk — same format and parser (hk-parser) as\n\
+         ! /etc/hdm/hdm.hk. Full syntax reference:\n\
+         !   https://hackeros-linux-system.github.io/HackerOS-Website/tools-docs/hk.html\n\
+         !\n\
+         ! This is a second, user-editable layer of the greeter's default\n\
+         ! settings. /etc/hdm/hdm.hk (root-managed) always wins for any key\n\
+         ! it sets; anything left unset there falls back to whatever is set\n\
+         ! here, and only then to the greeter's own built-in literal\n\
+         ! defaults. Safe to edit freely — no root needed — and never\n\
+         ! overwritten once it exists (see ensure_user_default_config() in\n\
+         ! greeter/src/main.rs).\n\
+         \n\
+         [general]\n\
+         -> theme        => {theme}\n\
+         -> background   => \"{wallpaper}\"\n\
+         -> clock_format => \"{clock}\"\n",
+        theme = DEFAULT_THEME,
+        wallpaper = DEFAULT_WALLPAPER,
+        clock = DEFAULT_CLOCK_FORMAT,
+    )
+}
+
+/// Writes the per-user default config the first time the greeter runs, if
+/// nothing is there yet — mirroring what `config::ensure_default_config()`
+/// does for `/etc/hdm/hdm.hk` on the daemon side, but at user scope (the
+/// greeter has no business creating files under `/etc`). Best-effort: a
+/// read-only `$HOME`, a missing `$HOME` entirely, or any other write
+/// failure just means there's no second config layer to fall back to,
+/// which is exactly the pre-existing behavior — never fatal.
+fn ensure_user_default_config() {
+    let Some(path) = user_config_path() else {
+        return;
+    };
+    if path.exists() {
+        return;
+    }
+    if let Some(parent) = path.parent() {
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    let _ = std::fs::write(&path, user_default_config_content());
+}
+
+/// Fills in whatever `primary` (the system config, `/etc/hdm/hdm.hk`)
+/// leaves unset from `fallback` (the per-user layer) — `primary` wins
+/// field-by-field for anything it does set.
+fn merge_general(primary: GreeterRawGeneral, fallback: GreeterRawGeneral) -> GreeterRawGeneral {
+    GreeterRawGeneral {
+        background: primary.background.or(fallback.background),
+        theme: primary.theme.or(fallback.theme),
+        clock_format: primary.clock_format.or(fallback.clock_format),
+        show_user_list: primary.show_user_list.or(fallback.show_user_list),
+    }
+}
+
+/// The effective `[general]` section: `system_config_path` (normally
+/// `/etc/hdm/hdm.hk`, or `$HDM_CONFIG`) first, then the per-user layer at
+/// `user_config_path()` for anything the system config leaves unset. Only
+/// touches the user layer at all when the system config is incomplete —
+/// a fully-specified /etc/hdm/hdm.hk never pays for a second file read.
+fn resolve_general_section(system_config_path: &str) -> GreeterRawGeneral {
+    let system = read_general_section(system_config_path);
+    let fully_specified = system.background.is_some()
+        && system.theme.is_some()
+        && system.clock_format.is_some()
+        && system.show_user_list.is_some();
+    if fully_specified {
+        return system;
+    }
+
+    let user = user_config_path()
+        .filter(|p| p.exists())
+        .map(|p| read_general_section(&p.to_string_lossy()))
+        .unwrap_or_default();
+    merge_general(system, user)
+}
+
 #[tauri::command]
 fn get_wallpaper() -> Option<String> {
     // Read from HDM config
     let config_path = std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
 
-    // Try to read background from the TOML config
-    let general = read_general_section(&config_path);
+    // Try to read background from the system config, falling back to the
+    // per-user layer (see resolve_general_section) before giving up.
+    let general = resolve_general_section(&config_path);
     if let Some(s) = general.background {
         if !s.is_empty() && std::path::Path::new(&s).exists() {
             return Some(format!("file://{}", s));
         }
     }
 
-    // Fallback wallpaper paths
+    // Fallback wallpaper paths, checked in order, for a system where
+    // neither config layer sets [general] -> background at all.
     let paths = [
+        DEFAULT_WALLPAPER,
         "/etc/hdm/wallpaper.png",
         "/etc/hdm/wallpaper.jpg",
-        "/usr/share/Blue-Environment/wallpapers/default.png",
         "/usr/share/wallpapers/default.png",
     ];
     paths
@@ -223,11 +343,13 @@ fn get_wallpaper() -> Option<String> {
 fn get_greeter_config() -> GreeterConfig {
     let config_path = std::env::var("HDM_CONFIG").unwrap_or_else(|_| "/etc/hdm/hdm.hk".to_string());
 
-    let general = read_general_section(&config_path);
+    let general = resolve_general_section(&config_path);
 
     GreeterConfig {
-        theme: general.theme.unwrap_or_else(|| "blue".to_string()),
-        clock_format: general.clock_format.unwrap_or_else(|| "%H:%M".to_string()),
+        theme: general.theme.unwrap_or_else(|| DEFAULT_THEME.to_string()),
+        clock_format: general
+            .clock_format
+            .unwrap_or_else(|| DEFAULT_CLOCK_FORMAT.to_string()),
         show_user_list: general.show_user_list.unwrap_or(true),
         background: general.background.filter(|s| !s.is_empty()),
     }
@@ -450,6 +572,12 @@ fn main() {
         .with_max_level(tracing::Level::INFO)
         .init();
 
+    // Give every fresh install/checkout an editable second layer of
+    // default settings at ~/.config/hdm/hdm.hk (see
+    // ensure_user_default_config() and resolve_general_section() above) —
+    // a no-op once that file already exists.
+    ensure_user_default_config();
+
     let state: ClientState = Arc::new(Mutex::new(None));
 
     tauri::Builder::default()
@@ -500,6 +628,69 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("HDM greeter error");
+}
+
+#[cfg(test)]
+mod general_config_tests {
+    use super::*;
+
+    #[test]
+    fn user_default_config_content_is_valid_hk_with_expected_defaults() {
+        let content = user_default_config_content();
+        let parsed = hk_parser::parse_hk(&content).expect("user default .hk must parse");
+        let general = parsed
+            .get("general")
+            .and_then(|v| v.as_map().ok())
+            .expect("[general] section must be present");
+
+        assert_eq!(
+            general.get("theme").and_then(|v| v.as_string().ok()),
+            Some(DEFAULT_THEME.to_string())
+        );
+        assert_eq!(
+            general.get("background").and_then(|v| v.as_string().ok()),
+            Some(DEFAULT_WALLPAPER.to_string())
+        );
+        assert_eq!(
+            general.get("clock_format").and_then(|v| v.as_string().ok()),
+            Some(DEFAULT_CLOCK_FORMAT.to_string())
+        );
+    }
+
+    #[test]
+    fn merge_general_prefers_system_values_over_the_user_layer() {
+        let system = GreeterRawGeneral {
+            background: None,
+            theme: Some("graphite".to_string()),
+            clock_format: None,
+            show_user_list: Some(true),
+        };
+        let user = GreeterRawGeneral {
+            background: Some("/tmp/wallpaper.png".to_string()),
+            theme: Some("midnight".to_string()),
+            clock_format: Some("%I:%M %p".to_string()),
+            show_user_list: Some(false),
+        };
+
+        let merged = merge_general(system, user);
+
+        // System sets theme and show_user_list — those win outright.
+        assert_eq!(merged.theme, Some("graphite".to_string()));
+        assert_eq!(merged.show_user_list, Some(true));
+        // System leaves background and clock_format unset — filled in
+        // from the user layer instead of staying None.
+        assert_eq!(merged.background, Some("/tmp/wallpaper.png".to_string()));
+        assert_eq!(merged.clock_format, Some("%I:%M %p".to_string()));
+    }
+
+    #[test]
+    fn merge_general_falls_back_to_literal_defaults_when_both_layers_are_empty() {
+        let merged = merge_general(GreeterRawGeneral::default(), GreeterRawGeneral::default());
+        assert_eq!(merged.background, None);
+        assert_eq!(merged.theme, None);
+        assert_eq!(merged.clock_format, None);
+        assert_eq!(merged.show_user_list, None);
+    }
 }
 
 #[cfg(test)]
