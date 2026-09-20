@@ -81,7 +81,7 @@ export default function PatternLock(props: PatternLockProps) {
     else setPath([]);
   }
 
-  const lineColor = () => (props.error ? '#ef4444' : '#3b82f6');
+  const lineColor = () => (props.error ? '#ef4444' : '#d4d4d8');
 
   return (
     <svg
