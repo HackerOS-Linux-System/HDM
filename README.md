@@ -5,9 +5,7 @@
 - **Tauri + React** greeter (`hdm-greeter`) — the login UI
 - **Unix socket IPC** — secure daemon↔greeter communication
 
-HDM is a rival to SDDM, GDM, and LightDM, designed for the
-[Blue Environment](https://github.com/HackerOS-Linux-System/Blue-environment)
-Wayland desktop but works with any session.
+HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
 
 ---
 
