@@ -402,7 +402,7 @@ export default function App() {
         <div class="flex items-center gap-2.5">
           <div
             class="w-7 h-7 rounded-xl flex items-center justify-center"
-            style="background:linear-gradient(135deg,#1d4ed8,#7c3aed); box-shadow:0 0 14px rgba(59,130,246,.4);"
+            style="background:linear-gradient(135deg,#52525b,#18181b); box-shadow:0 0 14px rgba(228,228,231,.35);"
           >
             <Shield size={14} class="text-white" />
           </div>
@@ -493,7 +493,7 @@ export default function App() {
                       <button
                         onClick={() => changeKbLayout(l)}
                         class={`w-full flex items-center gap-2.5 px-3 py-2 text-sm transition-colors hover:bg-white/5 ${
-                          kbLayout().id === l.id ? 'text-blue-400' : 'text-slate-400'
+                          kbLayout().id === l.id ? 'text-zinc-100' : 'text-slate-400'
                         }`}
                       >
                         <span class="text-base">{l.flag}</span>
@@ -575,7 +575,7 @@ export default function App() {
             <div class="flex flex-col items-center gap-6 animate-fade-in">
               <div
                 class="w-20 h-20 rounded-2xl flex items-center justify-center"
-                style="background:linear-gradient(135deg,#1d4ed8,#7c3aed); box-shadow:0 0 40px rgba(59,130,246,.4);"
+                style="background:linear-gradient(135deg,#52525b,#18181b); box-shadow:0 0 40px rgba(228,228,231,.35);"
               >
                 <Shield size={36} class="text-white" />
               </div>
@@ -633,7 +633,7 @@ export default function App() {
               <div class="relative">
                 <div
                   class="w-24 h-24 rounded-full flex items-center justify-center text-3xl font-medium text-white"
-                  style="background:linear-gradient(135deg,#1d4ed8,#7c3aed); box-shadow:0 0 60px rgba(59,130,246,.5); font-family:'DM Sans',sans-serif;"
+                  style="background:linear-gradient(135deg,#52525b,#18181b); box-shadow:0 0 60px rgba(228,228,231,.4); font-family:'DM Sans',sans-serif;"
                 >
                   <Show
                     when={selectedUser() && avatars()[selectedUser()!.username]}
@@ -648,7 +648,7 @@ export default function App() {
                 </div>
                 <div
                   class="absolute inset-0 rounded-full animate-pulse-glow"
-                  style="border:2px solid rgba(59,130,246,.5);"
+                  style="border:2px solid rgba(228,228,231,.4);"
                 />
               </div>
               <div class="text-center">
@@ -715,7 +715,7 @@ export default function App() {
                       <span
                         class="text-[10px] px-1.5 py-0.5 rounded"
                         style={`
-                          background:${isWayland(currentSession()?.session_type) ? 'rgba(59,130,246,.15)' : 'rgba(249,115,22,.15)'};
+                          background:${isWayland(currentSession()?.session_type) ? 'rgba(228,228,231,.15)' : 'rgba(249,115,22,.15)'};
                           color:${isWayland(currentSession()?.session_type) ? '#93c5fd' : '#fdba74'};
                           font-family:'JetBrains Mono',monospace;
                         `}
@@ -755,8 +755,8 @@ export default function App() {
                   <div
                     class="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-medium text-white"
                     style={`
-                      background:${avatars()[selectedUser()!.username] ? 'transparent' : 'linear-gradient(135deg,#1d4ed8,#7c3aed)'};
-                      box-shadow:0 0 0 3px rgba(59,130,246,.3),0 4px 20px rgba(0,0,0,.4);
+                      background:${avatars()[selectedUser()!.username] ? 'transparent' : 'linear-gradient(135deg,#52525b,#18181b)'};
+                      box-shadow:0 0 0 3px rgba(228,228,231,.3),0 4px 20px rgba(0,0,0,.4);
                       font-family:'DM Sans',sans-serif;
                     `}
                   >
@@ -809,7 +809,7 @@ export default function App() {
                       onClick={() => setAuthMethod('password')}
                       class={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                         authMethod() === 'password'
-                          ? 'bg-blue-600 text-white'
+                          ? 'bg-zinc-600 text-white'
                           : 'text-slate-500 hover:text-slate-300'
                       }`}
                     >
@@ -820,7 +820,7 @@ export default function App() {
                         onClick={() => setAuthMethod('pattern')}
                         class={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                           authMethod() === 'pattern'
-                            ? 'bg-blue-600 text-white'
+                            ? 'bg-zinc-600 text-white'
                             : 'text-slate-500 hover:text-slate-300'
                         }`}
                       >
@@ -832,7 +832,7 @@ export default function App() {
                         onClick={() => setAuthMethod('fingerprint')}
                         class={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                           authMethod() === 'fingerprint'
-                            ? 'bg-blue-600 text-white'
+                            ? 'bg-zinc-600 text-white'
                             : 'text-slate-500 hover:text-slate-300'
                         }`}
                       >
@@ -936,15 +936,15 @@ export default function App() {
                       disabled={isAuthenticating() || isLockedOut()}
                       class="w-20 h-20 rounded-full flex items-center justify-center transition-all"
                       style={`
-                        background:${isAuthenticating() ? 'rgba(59,130,246,0.2)' : 'rgba(8,20,45,0.6)'};
-                        border:2px solid ${isAuthenticating() ? '#3b82f6' : 'rgba(59,130,246,0.3)'};
+                        background:${isAuthenticating() ? 'rgba(228,228,231,0.2)' : 'rgba(8,20,45,0.6)'};
+                        border:2px solid ${isAuthenticating() ? '#d4d4d8' : 'rgba(228,228,231,0.3)'};
                       `}
                     >
                       <Show
                         when={isAuthenticating()}
-                        fallback={<Fingerprint size={32} class="text-blue-400" />}
+                        fallback={<Fingerprint size={32} class="text-zinc-100" />}
                       >
-                        <Loader2 size={32} class="text-blue-400 animate-spin" />
+                        <Loader2 size={32} class="text-zinc-100 animate-spin" />
                       </Show>
                     </button>
                     <Show when={authError() && !isLockedOut()}>
@@ -970,7 +970,7 @@ export default function App() {
                       <span
                         class="text-[10px] px-1.5 py-0.5 rounded"
                         style={`
-                          background:${isWayland(currentSession()?.session_type) ? 'rgba(59,130,246,.15)' : 'rgba(249,115,22,.15)'};
+                          background:${isWayland(currentSession()?.session_type) ? 'rgba(228,228,231,.15)' : 'rgba(249,115,22,.15)'};
                           color:${isWayland(currentSession()?.session_type) ? '#93c5fd' : '#fdba74'};
                           font-family:'JetBrains Mono',monospace;
                         `}
