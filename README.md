@@ -98,7 +98,8 @@ not TOML:
 [general]
 -> greeter_path   => "/usr/bin/hdm-greeter"
 -> vt             => 1
--> theme          => blue
+-> theme          => graphite
+-> background     => "/usr/share/wallpapers/HackerOS-Wallpapers/Wallpaper23.png"
 -> show_user_list => true
 -> allow_root     => false
 -> minimum_uid    => 1000
@@ -114,6 +115,12 @@ not TOML:
 -> suspend   => "systemctl suspend"
 -> hibernate => "systemctl hibernate"
 ```
+
+`/etc/hdm/hdm.hk` always wins. Anything it doesn't set falls back to a
+second, user-editable layer at `~/.config/hdm/hdm.hk` (same `.hk` format,
+auto-created with the same defaults the first time the greeter runs — see
+`ensure_user_default_config()` in `greeter/src/main.rs`), and only then to
+the greeter's own built-in defaults.
 
 ---
 
