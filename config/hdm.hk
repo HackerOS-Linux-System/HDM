@@ -26,7 +26,12 @@
 -> vt             => 1
 
 ! Greeter theme name (passed through to the UI, see ui/src/app.css).
--> theme          => blue
+-> theme          => graphite
+
+! Path to the wallpaper image shown behind the login screen. Falls back
+! to a handful of hardcoded paths (see get_wallpaper() in
+! greeter/src/main.rs) if this is unset, empty, or the file is missing.
+-> background     => "/usr/share/wallpapers/HackerOS-Wallpapers/Wallpaper23.png"
 
 ! Show the list of local users (UID between minimum_uid and maximum_uid)
 ! on the login screen, rather than only a plain username field.
