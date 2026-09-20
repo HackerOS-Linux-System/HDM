@@ -27,9 +27,9 @@ export default function UserCard(props: UserCardProps) {
       onClick={() => props.onClick()}
       class="group flex flex-col items-center gap-3 p-5 rounded-2xl transition-all duration-300 w-36"
       style={`
-        background:${props.isSelected ? 'rgba(37,99,235,0.12)' : 'rgba(8,20,45,0.4)'};
-        border:${props.isSelected ? '1px solid rgba(59,130,246,0.4)' : '1px solid rgba(255,255,255,0.05)'};
-        box-shadow:${props.isSelected ? '0 0 32px rgba(59,130,246,0.15)' : 'none'};
+        background:${props.isSelected ? 'rgba(82,82,91,0.18)' : 'rgba(24,24,27,0.4)'};
+        border:${props.isSelected ? '1px solid rgba(228,228,231,0.4)' : '1px solid rgba(255,255,255,0.05)'};
+        box-shadow:${props.isSelected ? '0 0 32px rgba(0,0,0,0.25)' : 'none'};
         transform:${props.isSelected ? 'translateY(-2px)' : 'none'};
       `}
     >
@@ -40,8 +40,8 @@ export default function UserCard(props: UserCardProps) {
             <div
               class="w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-medium"
               style={`
-                background:linear-gradient(135deg, #1d4ed8 0%, #7c3aed 100%);
-                box-shadow:${props.isSelected ? '0 0 0 3px #3b82f6, 0 4px 20px rgba(59,130,246,0.4)' : '0 0 0 2px rgba(59,130,246,0.2), 0 4px 12px rgba(0,0,0,0.4)'};
+                background:linear-gradient(135deg, #52525b 0%, #18181b 100%);
+                box-shadow:${props.isSelected ? '0 0 0 3px #e4e4e7, 0 4px 20px rgba(228,228,231,0.4)' : '0 0 0 2px rgba(228,228,231,0.25), 0 4px 12px rgba(0,0,0,0.4)'};
                 font-family:'DM Sans', sans-serif;
               `}
             >
@@ -53,14 +53,14 @@ export default function UserCard(props: UserCardProps) {
             src={props.avatarData}
             alt={props.user.username}
             class="w-16 h-16 rounded-full object-cover"
-            style={`box-shadow:${props.isSelected ? '0 0 0 3px #3b82f6, 0 4px 20px rgba(59,130,246,0.4)' : '0 0 0 2px rgba(59,130,246,0.2), 0 4px 12px rgba(0,0,0,0.4)'};`}
+            style={`box-shadow:${props.isSelected ? '0 0 0 3px #e4e4e7, 0 4px 20px rgba(228,228,231,0.4)' : '0 0 0 2px rgba(228,228,231,0.25), 0 4px 12px rgba(0,0,0,0.4)'};`}
           />
         </Show>
 
         <Show when={props.isSelected}>
           <div
             class="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center"
-            style="background:#3b82f6; box-shadow:0 0 8px rgba(59,130,246,0.8);"
+            style="background:#71717a; box-shadow:0 0 8px rgba(228,228,231,0.7);"
           >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
               <path
