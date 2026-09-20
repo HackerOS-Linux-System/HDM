@@ -58,9 +58,9 @@ export default function SessionPicker(props: SessionPickerProps) {
               <span
                 class="text-[10px] px-1.5 py-0.5 rounded shrink-0"
                 style={`
-                  background:${isWayland ? 'rgba(59,130,246,0.15)' : 'rgba(249,115,22,0.15)'};
-                  color:${isWayland ? '#93c5fd' : '#fdba74'};
-                  border:${isWayland ? '1px solid rgba(59,130,246,0.2)' : '1px solid rgba(249,115,22,0.2)'};
+                  background:${isWayland ? 'rgba(228,228,231,0.15)' : 'rgba(249,115,22,0.15)'};
+                  color:${isWayland ? '#e4e4e7' : '#fdba74'};
+                  border:${isWayland ? '1px solid rgba(228,228,231,0.2)' : '1px solid rgba(249,115,22,0.2)'};
                   font-family:'JetBrains Mono', monospace;
                 `}
               >
@@ -70,7 +70,7 @@ export default function SessionPicker(props: SessionPickerProps) {
               <Show when={isSelected()}>
                 <div
                   class="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
-                  style="background:#3b82f6;"
+                  style="background:#71717a;"
                 >
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                     <path
