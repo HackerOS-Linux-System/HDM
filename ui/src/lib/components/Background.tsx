@@ -79,11 +79,11 @@ export default function Background(props: BackgroundProps) {
 
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = `rgba(147, 197, 253, ${p.opacity * 0.5})`;
+        ctx.fillStyle = `rgba(228, 228, 231, ${p.opacity * 0.5})`;
         ctx.fill();
       }
 
-      ctx.strokeStyle = 'rgba(59, 130, 246, 0.03)';
+      ctx.strokeStyle = 'rgba(228, 228, 231, 0.04)';
       ctx.lineWidth = 1;
       const gridSize = 80;
       for (let x = 0; x < canvas.width; x += gridSize) {
@@ -114,7 +114,7 @@ export default function Background(props: BackgroundProps) {
 
   return (
     <div class="fixed inset-0 overflow-hidden">
-      <div class="absolute inset-0 bg-[#020812]" />
+      <div class="absolute inset-0 bg-[#0a0a0b]" />
 
       <Show when={props.wallpaper}>
         <div
@@ -126,15 +126,15 @@ export default function Background(props: BackgroundProps) {
       <div class="absolute inset-0 overflow-hidden">
         <div
           class="aurora-1 absolute rounded-full"
-          style="width:70vw;height:70vw;left:-20vw;top:-20vw;background:radial-gradient(circle, rgba(37,99,235,0.12) 0%, rgba(29,78,216,0.06) 50%, transparent 70%);filter:blur(80px);"
+          style="width:70vw;height:70vw;left:-20vw;top:-20vw;background:radial-gradient(circle, rgba(228,228,231,0.10) 0%, rgba(161,161,170,0.05) 50%, transparent 70%);filter:blur(80px);"
         />
         <div
           class="aurora-2 absolute rounded-full"
-          style="width:60vw;height:60vw;right:-15vw;bottom:-10vw;background:radial-gradient(circle, rgba(124,58,237,0.1) 0%, rgba(109,40,217,0.05) 50%, transparent 70%);filter:blur(80px);"
+          style="width:60vw;height:60vw;right:-15vw;bottom:-10vw;background:radial-gradient(circle, rgba(113,113,122,0.10) 0%, rgba(63,63,70,0.05) 50%, transparent 70%);filter:blur(80px);"
         />
         <div
           class="aurora-3 absolute rounded-full"
-          style="width:40vw;height:40vw;left:30vw;top:20vh;background:radial-gradient(circle, rgba(6,182,212,0.06) 0%, transparent 70%);filter:blur(60px);"
+          style="width:40vw;height:40vw;left:30vw;top:20vh;background:radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%);filter:blur(60px);"
         />
       </div>
 
@@ -142,7 +142,7 @@ export default function Background(props: BackgroundProps) {
 
       <div
         class="absolute inset-0 pointer-events-none"
-        style="background:radial-gradient(ellipse at center, transparent 40%, rgba(2,8,18,0.7) 100%);"
+        style="background:radial-gradient(ellipse at center, transparent 40%, rgba(10,10,11,0.7) 100%);"
       />
     </div>
   );
