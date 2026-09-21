@@ -71,6 +71,18 @@
 ! refusing to show a login screen at all.
 -> compositor => cage
 
+! Forces the compositor's rendering backend via the WLR_RENDERER
+! environment variable. Leave commented out to let cage/wlroots
+! auto-detect (normally GLES2 over EGL/GBM). Uncomment and set to
+! "pixman" if cage crashes at startup right after the EGL/render lines in
+! its log with "Assertion 'surface->initialized' failed" (and a
+! "Broken pipe" GDK message on the greeter's side right after) — that is
+! a cage/wlroots GLES2+EGL/GBM renderer crash on certain GPU driver
+! combinations (seen on some Intel i915 setups), not an HDM or greeter
+! bug, and switching cage to the software Pixman renderer sidesteps it.
+! See the README's Troubleshooting section.
+! -> compositor_renderer => pixman
+
 ! Uncomment to run the greeter (and the compositor above) as a specific
 ! unprivileged system user instead of root. Only do this once that user
 ! has the device access cage needs (/dev/dri, /dev/input — typically the
