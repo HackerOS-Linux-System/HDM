@@ -67,6 +67,11 @@ pub enum DaemonResponse {
         uptime: u64,
         os_name: String,
         os_version: String,
+        /// The effective default session id (see
+        /// `session::get_default_session`) — lets the greeter pre-select
+        /// the right session in its picker without duplicating HDM's
+        /// `[default]`/`sessions_dir` resolution logic on the UI side.
+        default_session: String,
     },
     PowerResult {
         success: bool,
@@ -151,7 +156,7 @@ async fn handle_client(mut stream: UnixStream, state: Arc<Mutex<DaemonState>>) {
     // cannot be reset by reconnecting.
 
     // Send welcome Info on connect
-    send_response(&mut writer, &build_info_response().await).await;
+    send_response(&mut writer, &build_info_response(&state).await).await;
 
     while let Ok(Some(line)) = lines.next_line().await {
         let line = line.trim().to_string();
@@ -175,7 +180,7 @@ async fn handle_client(mut stream: UnixStream, state: Arc<Mutex<DaemonState>>) {
 
         match request {
             GreeterRequest::GetInfo => {
-                send_response(&mut writer, &build_info_response().await).await;
+                send_response(&mut writer, &build_info_response(&state).await).await;
             }
             GreeterRequest::GetSessions => {
                 let sessions = crate::session::list_sessions(&state).await;
@@ -448,7 +453,7 @@ async fn send_response(writer: &mut tokio::net::unix::WriteHalf<'_>, response: &
     }
 }
 
-async fn build_info_response() -> DaemonResponse {
+async fn build_info_response(state: &Arc<Mutex<DaemonState>>) -> DaemonResponse {
     let hostname = std::fs::read_to_string("/etc/hostname")
         .unwrap_or_else(|_| "localhost".to_string())
         .trim()
@@ -460,12 +465,14 @@ async fn build_info_response() -> DaemonResponse {
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(0.0) as u64;
     let (os_name, os_version) = read_os_release();
+    let default_session = crate::session::get_default_session(state).await;
     DaemonResponse::Info {
         version: crate::HDM_VERSION.to_string(),
         hostname,
         uptime,
         os_name,
         os_version,
+        default_session,
     }
 }
 
