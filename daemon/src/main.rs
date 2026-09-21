@@ -155,7 +155,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
     // recursive call itself is wrapped in Box::pin — the fix is to use a
     // loop instead of self-recursion.
     loop {
-        let (greeter_path, vt_num, compositor, greeter_user) = {
+        let (greeter_path, vt_num, compositor, compositor_renderer, greeter_user) = {
             let st = state.lock().await;
             (
                 st.config
@@ -167,6 +167,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
                     .compositor
                     .clone()
                     .unwrap_or_else(|| "cage".to_string()),
+                st.config.compositor_renderer.clone(),
                 st.config.greeter_user.clone(),
             )
         };
@@ -205,9 +206,16 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
         }
 
         let spawn_result = if use_compositor {
-            spawn_greeter_command(&compositor, &greeter_path, &runtime_dir, uid, gid)
+            spawn_greeter_command(
+                &compositor,
+                compositor_renderer.as_deref(),
+                &greeter_path,
+                &runtime_dir,
+                uid,
+                gid,
+            )
         } else {
-            spawn_greeter_command("none", &greeter_path, &runtime_dir, uid, gid)
+            spawn_greeter_command("none", None, &greeter_path, &runtime_dir, uid, gid)
         };
 
         let mut child = match spawn_result {
@@ -221,7 +229,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
                     "Failed to launch compositor '{}': {} — falling back to launching '{}' directly this cycle",
                     compositor, e, greeter_path
                 );
-                match spawn_greeter_command("none", &greeter_path, &runtime_dir, uid, gid) {
+                match spawn_greeter_command("none", None, &greeter_path, &runtime_dir, uid, gid) {
                     Ok(child) => child,
                     Err(e2) => {
                         error!("Failed to launch greeter '{}' directly too: {}", greeter_path, e2);
@@ -302,6 +310,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
 /// `systemd-logind` seat session) — see the README's Compositor section.
 fn spawn_greeter_command(
     compositor: &str,
+    compositor_renderer: Option<&str>,
     greeter_path: &str,
     runtime_dir: &str,
     uid: u32,
@@ -321,23 +330,34 @@ fn spawn_greeter_command(
         .env("XDG_RUNTIME_DIR", runtime_dir);
 
     // hdm-greeter is a Tauri/WebKitGTK app, and WebKitGTK's DMA-BUF
-    // renderer is well known to crash the *host* compositor (cage here)
-    // rather than itself when it runs inside a nested/kiosk Wayland
-    // compositor on Mesa/i915 (and several other) GPU drivers: the
-    // WebKit process hands the compositor a DMA-BUF-backed surface that
-    // the compositor's renderer can't import, the client connection then
-    // drops (seen here as "Broken pipe" while cage is reading display
-    // events), and cage aborts on an internal
-    // `assert(surface->initialized)` while tearing that surface down —
-    // not a bug in HDM's own code, but one only HDM (as the process that
-    // launches the greeter) is in a position to work around. Forcing
-    // WebKit onto its non-DMA-BUF (software/EGL fallback) rendering path
-    // avoids the crash entirely, at a small, acceptable cost in GPU
-    // compositing performance for what is just a login screen. Only
-    // relevant when a compositor is actually hosting the greeter — a
-    // `compositor = "none"` X11 greeter doesn't hit this path — but it's
-    // harmless to set unconditionally, so it isn't gated on that here.
+    // renderer is well known to crash a *host* nested/kiosk Wayland
+    // compositor it's running inside of on some Mesa/i915 (and other) GPU
+    // driver combinations. Not the bug this function used to think it
+    // was working around below (see compositor_renderer), but a real,
+    // separate failure mode of its own, so it's still worth disabling
+    // unconditionally here — it's harmless when it isn't the culprit.
     cmd.env("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+
+    // `[general] -> compositor_renderer` in hdm.hk (see the field's doc
+    // comment on `HdmConfig` in config.rs). Forces the compositor's
+    // `WLR_RENDERER` — e.g. `"pixman"` to sidestep a cage/wlroots
+    // GLES2-over-EGL/GBM renderer crash on the *compositor's own* output
+    // surface (logged as `[render/egl.c:...]` lines immediately followed
+    // by `Assertion 'surface->initialized' failed`, which is a crash in
+    // cage/wlroots itself — WEBKIT_DISABLE_DMABUF_RENDERER above cannot
+    // touch it, since it happens before the greeter's WebKit process has
+    // rendered anything at all). `None` (the default) sets nothing and
+    // leaves cage/wlroots to auto-detect as before. Only meaningful when
+    // an actual compositor is hosting the greeter, hence gated on
+    // `compositor != "none"` here rather than being set unconditionally
+    // like WEBKIT_DISABLE_DMABUF_RENDERER above.
+    if !(compositor.eq_ignore_ascii_case("none") || compositor.is_empty()) {
+        if let Some(renderer) = compositor_renderer {
+            if !renderer.is_empty() {
+                cmd.env("WLR_RENDERER", renderer);
+            }
+        }
+    }
 
     if uid != 0 {
         unsafe {
