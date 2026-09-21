@@ -13,10 +13,10 @@
 !
 ! IMPORTANT for maintainers: daemon/src/config.rs has a test
 ! (packaged_config_file_matches_default_config_content) that asserts this
-! file's [general] and [power] sections parse to exactly the same
-! HdmConfig as config::default_config_content(). If you change a value in
-! one, change it in the other — `cd daemon && cargo test` will fail loudly
-! if they drift apart.
+! file parses to exactly the same HdmConfig as
+! config::default_config_content() — [general], [autologin], [default] and
+! [power] alike. If you change a value in one, change it in the other —
+! `cd daemon && cargo test` will fail loudly if they drift apart.
 
 [general]
 ! Path to the greeter binary the daemon spawns on VT switch.
@@ -45,9 +45,10 @@
 ! daemon/src/users.rs::ensure_guest_account for what a guest session is.
 -> allow_guest    => false
 
-! Only users with minimum_uid <= UID <= maximum_uid show up in the user
-! list and are eligible for live-mode autologin (see
-! daemon/src/users.rs::find_live_user).
+! Only users with minimum_uid <= UID <= maximum_uid show up in the login
+! screen's user list. Live-mode autologin (see [autologin] -> live_detect
+! below) is NOT limited by this range on purpose — see
+! daemon/src/users.rs::find_live_user.
 -> minimum_uid    => 1000
 -> maximum_uid    => 65533
 
@@ -59,12 +60,49 @@
 ! locally-installed sessions that override the system-wide ones.
 -> sessions_dir   => ["/usr/share/wayland-sessions", "/usr/share/xsessions", "/usr/local/share/wayland-sessions"]
 
-! Uncomment and fill in to enable autologin (skips the greeter entirely
-! and launches straight into `session` for `user` after `delay` seconds):
-! [autologin]
+! Wayland compositor HDM wraps the greeter binary in before launching it
+! (see spawn_greeter_command() in daemon/src/main.rs). The greeter is a
+! windowed Tauri/WebKit app, not a compositor itself, so it needs one to
+! actually get a display to render into pre-login. "cage" (a single-app
+! Wayland kiosk compositor, see https://github.com/cage-kiosk/cage) is
+! used by default; set to "none" to launch greeter_path directly instead.
+! If the named compositor binary can't be found, HDM logs it and falls
+! back to launching greeter_path directly for that cycle rather than
+! refusing to show a login screen at all.
+-> compositor => cage
+
+[autologin]
+! Live-mode autologin (Blue Installer / live-boot media) — active by
+! default and independent of everything else in this section: if ANY
+! user's home directory contains the marker file named by live_marker
+! below, HDM logs that user straight in with no password prompt and no
+! further [autologin] configuration required at all — no user/session/
+! delay needs to be set, and the account doesn't need to fall inside
+! minimum_uid/maximum_uid above either (a live image's built-in user
+! commonly doesn't). See daemon/src/users.rs::find_live_user. Blue
+! Installer deletes the marker file once installation completes, so the
+! next boot goes back to a normal password prompt.
+-> live_detect => true
+-> live_marker => ".config/Blue-Environment/.live"
+
+! Uncomment and fill in to force autologin unconditionally into a specific
+! user/session instead (skips the greeter, live-mode detection, and any
+! password prompt entirely):
 ! -> user    => username
 ! -> session => blue-environment
 ! -> delay   => 0
+
+[default]
+! ID of the session HDM treats as the default: matched against the "id"
+! of a .desktop file found by scanning [general] -> sessions_dir above
+! (see daemon/src/session.rs::list_sessions), or the built-in
+! "blue-environment" fallback session, which always exists even with no
+! matching .desktop file. Used to pre-select a session in the greeter's
+! session picker, and as the session live-mode autologin (and any
+! [autologin] entry that omits `session`) launches into. Falls back to
+! "blue-environment" if unset or if it doesn't match any session actually
+! found — see daemon/src/session.rs::get_default_session.
+-> session => blue-environment
 
 [power]
 ! Shell commands HDM runs (via `sh -c`) for each power-menu action —
