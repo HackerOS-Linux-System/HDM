@@ -61,11 +61,19 @@
 -> sessions_dir   => ["/usr/share/wayland-sessions", "/usr/share/xsessions", "/usr/local/share/wayland-sessions"]
 
 ! Wayland compositor HDM wraps the greeter binary in before launching it
-! (see spawn_greeter_command() in daemon/src/main.rs). The greeter is a
+! (see spawn_greeter_command() / apply_compositor_args() in
+! daemon/src/main.rs). The greeter is a
 ! windowed Tauri/WebKit app, not a compositor itself, so it needs one to
 ! actually get a display to render into pre-login. "cage" (a single-app
 ! Wayland kiosk compositor, see https://github.com/cage-kiosk/cage) is
 ! used by default; set to "none" to launch greeter_path directly instead.
+! "labwc" (a full wlroots-based stacking window manager, see
+! https://github.com/labwc/labwc, run here single-app-style via its own
+! -S/--session flag) is also recognized by name and worth trying if cage
+! itself is the problem on a given machine — cage and labwc are separate
+! wlroots-based compositors with their own renderer code, so a crash
+! specific to one (see compositor_renderer below) doesn't necessarily
+! affect the other.
 ! If the named compositor binary can't be found, HDM logs it and falls
 ! back to launching greeter_path directly for that cycle rather than
 ! refusing to show a login screen at all.
