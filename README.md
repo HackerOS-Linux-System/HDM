@@ -308,6 +308,24 @@ in the `video`/`render`/`input` groups and has an active seat session
 (`seatd`, or `systemd-logind` on a system with elogind/logind support) —
 see `config/sysusers.d/hdm.conf` for a starting point.
 
+**Cage crashes with `Error reading events from display: Broken pipe:
+Assertion \`surface->initialized' failed`, right after the DRM/EGL init
+lines in the log (GPU/CRTCs/planes all found fine, so this isn't the
+black-screen device-access issue above).** This was a real bug, fixed:
+`hdm-greeter` is a Tauri/WebKitGTK application, and WebKitGTK's DMA-BUF
+render path is known to crash the *host* compositor — cage, here — rather
+than itself when running nested inside a kiosk Wayland compositor on
+Mesa/i915 (and some other) GPU drivers. The WebKit process's surface gets
+torn down mid-way through initialization, the client connection drops
+(the "Broken pipe" above), and cage hits an internal assertion while
+cleaning it up. `spawn_greeter_command()` in `daemon/src/main.rs` now sets
+`WEBKIT_DISABLE_DMABUF_RENDERER=1` in the greeter's environment, which
+forces WebKitGTK off that render path and avoids the crash, at a small
+cost in GPU compositing performance that doesn't matter for a login
+screen. If you still see this after updating, it may be a different,
+underlying wlroots/cage bug — try updating `cage` itself and check
+https://github.com/cage-kiosk/cage/issues.
+
 ---
 
 ## Security notes
