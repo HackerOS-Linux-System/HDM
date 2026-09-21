@@ -9,16 +9,31 @@ pub struct HdmConfig {
     pub vt: Option<u8>,
     /// Wayland compositor the daemon wraps `greeter_path` in before
     /// spawning it (`[general] -> compositor` in hdm.hk) — see
-    /// `main.rs::spawn_greeter_command`. `"cage"` by default: the Tauri /
+    /// `main.rs::spawn_greeter_command` and, for the actual per-compositor
+    /// command-line contract, `main.rs::apply_compositor_args`. `"cage"` by
+    /// default: the Tauri /
     /// WebKit greeter is just a windowed application, not a compositor, so
     /// it needs something to hand it a Wayland display pre-login. Set to
     /// `"none"` to spawn `greeter_path` directly (e.g. an X11 greeter, or
-    /// one that brings up its own compositor).
+    /// one that brings up its own compositor). `"labwc"` (a full
+    /// wlroots-based stacking window manager, run here single-app-style via
+    /// its own `-S`/`--session` flag) is also recognized by name and is a
+    /// reasonable thing to try if `cage` itself turns out to be the
+    /// problem on a given machine — e.g. the `Assertion
+    /// 'surface->initialized' failed` crash `compositor_renderer` below
+    /// documents is specific to cage/wlroots' own renderer, so switching
+    /// compositor entirely (not just its renderer) is a legitimate second
+    /// thing to try if `compositor_renderer = "pixman"` alone doesn't help.
+    /// Any other value is assumed to be cage-compatible (`-s -- <cmd>`) —
+    /// see `apply_compositor_args` if that assumption is wrong for a
+    /// specific binary.
     pub compositor: Option<String>,
     /// Rendering backend to force the compositor into, via the `WLR_RENDERER`
     /// environment variable HDM sets before spawning it (`[general] ->
     /// compositor_renderer` in hdm.hk; see `main.rs::spawn_greeter_command`).
-    /// `None` by default, meaning HDM sets nothing and cage/wlroots
+    /// Applies to any wlroots-based `compositor` (cage, labwc, ...) since
+    /// `WLR_RENDERER` is wlroots' own env var, not cage-specific.
+    /// `None` by default, meaning HDM sets nothing and the compositor
     /// auto-detects as usual (GLES2 via EGL/GBM, normally). Some GPU
     /// driver combinations — certain Intel i915 + Mesa versions among
     /// them — crash cage's own output render surface during EGL/GBM setup
@@ -345,11 +360,19 @@ pub fn default_config_content() -> &'static str {
 -> sessions_dir   => ["/usr/share/wayland-sessions", "/usr/share/xsessions", "/usr/local/share/wayland-sessions"]
 
 ! Wayland compositor HDM wraps the greeter binary in before launching it
-! (see spawn_greeter_command() in daemon/src/main.rs). The greeter is a
+! (see spawn_greeter_command() / apply_compositor_args() in
+! daemon/src/main.rs). The greeter is a
 ! windowed Tauri/WebKit app, not a compositor itself, so it needs one to
 ! actually get a display to render into pre-login. "cage" (a single-app
 ! Wayland kiosk compositor, see https://github.com/cage-kiosk/cage) is
 ! used by default; set to "none" to launch greeter_path directly instead.
+! "labwc" (a full wlroots-based stacking window manager, see
+! https://github.com/labwc/labwc, run here single-app-style via its own
+! -S/--session flag) is also recognized by name and worth trying if cage
+! itself is the problem on a given machine — cage and labwc are separate
+! wlroots-based compositors with their own renderer code, so a crash
+! specific to one (see compositor_renderer below) doesn't necessarily
+! affect the other.
 ! If the named compositor binary can't be found, HDM logs it and falls
 ! back to launching greeter_path directly for that cycle rather than
 ! refusing to show a login screen at all.
