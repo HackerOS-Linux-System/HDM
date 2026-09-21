@@ -278,20 +278,67 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
     }
 }
 
+/// Appends the flags/argv that give a specific Wayland compositor binary
+/// (`cmd`, already `Command::new(compositor)`) the "run `greeter_path` as
+/// my one client, and exit once it exits" contract HDM's respawn loop in
+/// `launch_greeter()` needs — it decides the greeter has exited by waiting
+/// on *this* process, so the compositor exiting when its client does is
+/// load-bearing, not just tidy.
+///
+/// Different compositors spell that differently, so this switches on
+/// `compositor`'s basename (case-insensitive; a full path like
+/// `/usr/bin/cage` and a bare `cage` are treated the same) instead of
+/// assuming every compositor speaks the same dialect — an earlier version
+/// of this code hardcoded cage's contract for every compositor name, which
+/// silently breaks labwc (see below) rather than failing loudly:
+///
+/// - **cage** (<https://github.com/cage-kiosk/cage>): `-s -- <cmd>
+///   [args...]`. `-s` tells cage not to fall back to VT-switching on its
+///   own, since HDM already handles that itself via `vt::switch_to`; `--`
+///   ends option parsing so the remainder execs directly as `greeter_path`'s
+///   own argv, no shell involved.
+/// - **labwc** (<https://github.com/labwc/labwc>): a full stacking window
+///   manager, not a single-app kiosk compositor — but usable as one here via
+///   `-S <command>` / `--session` (labwc's man page: "Run command on
+///   startup and terminate compositor on exit", exactly the behavior above).
+///   Its plain `-s`/`--startup` runs the command but does *not* exit labwc
+///   when it does, which would turn every greeter exit (e.g. "start
+///   session" after a successful login) into an orphaned labwc process
+///   HDM's loop never notices. `<command>` is also a single shell-parsed
+///   string, not a `--`-terminated argv like cage's — labwc doesn't
+///   recognize `--` as an argument terminator at all, so reusing cage's
+///   `-S -- <path>` form would hand labwc the literal two-character string
+///   `"--"` as its startup command and the greeter would simply never run.
+/// - **anything else** (an unrecognized compositor name/path): falls back
+///   to cage's `-s -- <cmd>` contract, since most other single-app Wayland
+///   kiosk compositors modeled themselves on cage rather than on labwc's
+///   full-window-manager `-S`. If that's wrong for some other compositor a
+///   deployment wants to use, this is the function to extend — add another
+///   name match above the fallback rather than changing the fallback
+///   itself, so unrecognized-but-cage-compatible binaries keep working.
+fn apply_compositor_args(cmd: &mut tokio::process::Command, compositor: &str, greeter_path: &str) {
+    let name = std::path::Path::new(compositor)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(compositor);
+
+    if name.eq_ignore_ascii_case("labwc") {
+        cmd.arg("-S").arg(greeter_path);
+    } else {
+        cmd.arg("-s").arg("--").arg(greeter_path);
+    }
+}
+
 /// Builds and spawns the command that actually brings up the greeter.
 ///
 /// `compositor == "none"` spawns `greeter_path` directly (the historical
 /// behavior — e.g. for an X11 greeter, or one that manages its own
-/// compositor). Any other value is treated as the name/path of a
-/// single-application Wayland kiosk compositor binary and the greeter is
-/// wrapped as `<compositor> -s -- <greeter_path>` — this is cage's
-/// (https://github.com/cage-kiosk/cage) own command-line contract (`-s`:
-/// don't fall back to VT-switching on its own since HDM already handles
-/// that via `vt::switch_to`) and is what actually gives the Tauri/WebKit
-/// greeter a Wayland display to render into pre-login; the greeter binary
-/// itself is just a windowed application, not a compositor. Any other
-/// drop-in-compatible single-app compositor honoring the same `-s -- <cmd>`
-/// contract works too — this isn't hardcoded to literally require `cage`.
+/// compositor). Any other value is treated as the name/path of a Wayland
+/// compositor binary, and the greeter is wrapped in it using that
+/// compositor's own command-line contract for "run this one client and
+/// exit when it exits" — see `apply_compositor_args()`, which is where
+/// that per-compositor knowledge actually lives; this function itself
+/// doesn't assume a specific one.
 ///
 /// `runtime_dir` MUST already exist, owned by `uid`/`gid`, mode 0700 — see
 /// the caller, `launch_greeter()` — before this is called: cage hard-fails
@@ -305,9 +352,10 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
 /// greeter_user` names a real, resolvable system user. Left unset (the
 /// default), the greeter keeps running as root, same as historically:
 /// running it unprivileged additionally requires that user to already have
-/// the access cage needs to open `/dev/dri`/`/dev/input` directly (the
-/// `video`/`render`/`input` groups, and ideally an active `seatd` or
-/// `systemd-logind` seat session) — see the README's Compositor section.
+/// the access the compositor needs to open `/dev/dri`/`/dev/input`
+/// directly (the `video`/`render`/`input` groups, and ideally an active
+/// `seatd` or `systemd-logind` seat session) — see the README's Compositor
+/// section.
 fn spawn_greeter_command(
     compositor: &str,
     compositor_renderer: Option<&str>,
@@ -320,7 +368,7 @@ fn spawn_greeter_command(
         tokio::process::Command::new(greeter_path)
     } else {
         let mut c = tokio::process::Command::new(compositor);
-        c.arg("-s").arg("--").arg(greeter_path);
+        apply_compositor_args(&mut c, compositor, greeter_path);
         c
     };
 
