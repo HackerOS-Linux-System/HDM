@@ -26,6 +26,10 @@ pub struct DaemonInfo {
     pub os_name: String,
     pub os_version: String,
     pub connected: bool,
+    /// The daemon's resolved `[default] -> session` (see
+    /// `session::get_default_session` on the daemon side) — the UI uses
+    /// this to pre-select a session instead of hardcoding "blue-environment".
+    pub default_session: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -53,6 +57,7 @@ async fn connect_daemon(state: tauri::State<'_, ClientState>) -> Result<DaemonIn
                 os_name: info.os_name,
                 os_version: info.os_version,
                 connected: true,
+                default_session: info.default_session,
             })
         }
         Err(e) => Err(format!("Cannot connect to HDM daemon: {}", e)),
