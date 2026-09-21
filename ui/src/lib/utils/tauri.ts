@@ -382,6 +382,7 @@ function mockInvoke<T>(cmd: string, args?: unknown): Promise<T> {
             os_name: 'LegendaryOS Linux',
             os_version: '0.2.0-alpha',
             connected: true,
+            default_session: 'blue-environment',
           }) as unknown as T,
       );
 
