@@ -28,6 +28,7 @@ export const DaemonInfoSchema = z.object({
   os_name: z.string(),
   os_version: z.string(),
   connected: z.boolean(),
+  default_session: z.string(),
 });
 
 export const UserInfoSchema = z.object({
