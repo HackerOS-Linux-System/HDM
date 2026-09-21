@@ -15,6 +15,24 @@ pub struct HdmConfig {
     /// `"none"` to spawn `greeter_path` directly (e.g. an X11 greeter, or
     /// one that brings up its own compositor).
     pub compositor: Option<String>,
+    /// Rendering backend to force the compositor into, via the `WLR_RENDERER`
+    /// environment variable HDM sets before spawning it (`[general] ->
+    /// compositor_renderer` in hdm.hk; see `main.rs::spawn_greeter_command`).
+    /// `None` by default, meaning HDM sets nothing and cage/wlroots
+    /// auto-detects as usual (GLES2 via EGL/GBM, normally). Some GPU
+    /// driver combinations — certain Intel i915 + Mesa versions among
+    /// them — crash cage's own output render surface during EGL/GBM setup
+    /// (logged as `[render/egl.c:...]` lines immediately followed by
+    /// `Assertion 'surface->initialized' failed` and the client-side GDK
+    /// "Error reading events from display: Broken pipe" once the Wayland
+    /// connection drops with it) before the greeter ever gets to render
+    /// anything — this is a crash in cage/wlroots' own renderer, not in
+    /// HDM or the greeter, and no HDM-side WebKit setting can work around
+    /// it. Setting this to `"pixman"` forces wlroots' software Pixman
+    /// renderer instead, which never touches EGL/GBM and sidesteps the
+    /// crash entirely — adequate for a login screen. See the README's
+    /// Troubleshooting section.
+    pub compositor_renderer: Option<String>,
     /// System user to run the greeter (and the compositor wrapping it) as,
     /// instead of root (`[general] -> greeter_user` in hdm.hk). `None` by
     /// default — the greeter runs as root, same as it always has; only set
@@ -73,6 +91,7 @@ impl Default for HdmConfig {
             greeter_path: Some("/usr/bin/hdm-greeter".to_string()),
             vt: Some(1),
             compositor: Some("cage".to_string()),
+            compositor_renderer: None,
             greeter_user: None,
             autologin_user: None,
             autologin_session: None,
@@ -199,6 +218,9 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
         compositor: general
             .and_then(|g| get_string(g, "compositor"))
             .or(defaults.compositor),
+        compositor_renderer: general
+            .and_then(|g| get_string(g, "compositor_renderer"))
+            .or(defaults.compositor_renderer),
         greeter_user: general
             .and_then(|g| get_string(g, "greeter_user"))
             .or(defaults.greeter_user),
@@ -332,6 +354,18 @@ pub fn default_config_content() -> &'static str {
 ! back to launching greeter_path directly for that cycle rather than
 ! refusing to show a login screen at all.
 -> compositor => cage
+
+! Forces the compositor's rendering backend via the WLR_RENDERER
+! environment variable. Leave commented out to let cage/wlroots
+! auto-detect (normally GLES2 over EGL/GBM). Uncomment and set to
+! "pixman" if cage crashes at startup right after the EGL/render lines in
+! its log with "Assertion 'surface->initialized' failed" (and a
+! "Broken pipe" GDK message on the greeter's side right after) — that is
+! a cage/wlroots GLES2+EGL/GBM renderer crash on certain GPU driver
+! combinations (seen on some Intel i915 setups), not an HDM or greeter
+! bug, and switching cage to the software Pixman renderer sidesteps it.
+! See the README's Troubleshooting section.
+! -> compositor_renderer => pixman
 
 ! Uncomment to run the greeter (and the compositor above) as a specific
 ! unprivileged system user instead of root. Only do this once that user
