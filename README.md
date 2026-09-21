@@ -230,6 +230,14 @@ can't be found at all, HDM logs that and falls back to launching
 `greeter_path` directly for that cycle rather than refusing to show a login
 screen.
 
+HDM always creates and owns `/run/user/<uid>` and sets `XDG_RUNTIME_DIR` to
+it before spawning the compositor/greeter — cage refuses to start at all
+without one. By default that's `/run/user/0` (root); `[general] ->
+greeter_user` (unset by default) lets you run the greeter as an
+unprivileged system user instead, but only do that once that user has the
+device access cage needs — see [Troubleshooting](#troubleshooting) and
+`config/sysusers.d/hdm.conf`.
+
 ---
 
 ## User Avatars
@@ -251,6 +259,54 @@ journalctl -u hdm -f
 # Or from file
 tail -f /var/log/hdm/hdm.log
 ```
+
+---
+
+## Troubleshooting
+
+**Running `hdm` manually without root: `HDM must run as root (UID 0)`.**
+Expected — HDM reads `/etc/shadow` and issues VT ioctls, both of which
+require root, so it refuses to start otherwise (see `main.rs`, checked via
+`libc::getuid()`). This has nothing to do with `sudo` specifically: the
+shipped `hdm.service` sets `User=root`/`Group=root` explicitly, so
+`systemctl start hdm` (or booting into it as `display-manager.service`)
+already runs it as root automatically — no interactive `sudo` involved at
+all. `sudo hdm` in a terminal is only useful for manually testing/debugging
+outside systemd, and by default `sudo` does *not* forward your shell's
+`XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, etc. into root's environment — which
+matters for the next issue below.
+
+**Greeter log spammed with `[../cage.c:298] XDG_RUNTIME_DIR is not set in
+the environment`, repeating forever until you `Ctrl+C`.** This was a real
+bug, fixed: `launch_greeter()` used to spawn `cage` without ever setting
+`XDG_RUNTIME_DIR`, so cage exited immediately every time — and because
+`launch_greeter()` relaunches the greeter whenever it exits, that turned
+into a tight crash/respawn loop rather than a one-time error. It now
+creates and owns `/run/user/<uid>` (uid 0 unless you've set `[general] ->
+greeter_user`) and sets `XDG_RUNTIME_DIR` to it before spawning, exactly
+like `session::launch_session()` already did for real user sessions. A
+1-second backoff was also added between relaunch attempts so any *future*
+fast-crash-loop stays readable in the log instead of flooding it. If you
+still see this after updating, check that `/run` isn't mounted read-only
+and that nothing else is deleting `/run/user/0` out from under HDM.
+
+**`sudo: nie udało się rozwiązać nazwy hosta ...` /
+`sudo: unable to resolve host ...` before HDM even starts.** Unrelated to
+HDM — it's `sudo` itself trying to resolve your machine's configured
+hostname and failing, almost always because that hostname isn't listed in
+`/etc/hosts`. Fix it at the OS level, e.g. add a line like
+`127.0.1.1 <your-hostname>` to `/etc/hosts` (`hostnamectl hostname` shows
+what it's currently set to). It's a warning, not a fatal error — `sudo`
+still runs the command afterwards.
+
+**Greeter runs but the screen is black / cage fails to open a device.**
+This means cage started (so `XDG_RUNTIME_DIR` is fine) but couldn't open
+`/dev/dri`/`/dev/input` — typically because `[general] -> greeter_user` is
+set to a user that lacks device access. Either leave `greeter_user` unset
+(root can always open these devices directly), or make sure that user is
+in the `video`/`render`/`input` groups and has an active seat session
+(`seatd`, or `systemd-logind` on a system with elogind/logind support) —
+see `config/sysusers.d/hdm.conf` for a starting point.
 
 ---
 
