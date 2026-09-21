@@ -17,6 +17,7 @@ describe('ipcSchemas', () => {
         os_name: 'LegendaryOS',
         os_version: '0.2.0',
         connected: true,
+        default_session: 'blue-environment',
       });
       expect(result.success).toBe(true);
     });
@@ -29,6 +30,7 @@ describe('ipcSchemas', () => {
         os_name: 'LegendaryOS',
         os_version: '0.2.0',
         connected: true,
+        default_session: 'blue-environment',
       });
       expect(result.success).toBe(false);
     });
@@ -41,6 +43,7 @@ describe('ipcSchemas', () => {
         os_name: 'LegendaryOS',
         os_version: '0.2.0',
         connected: true,
+        default_session: 'blue-environment',
       });
       expect(result.success).toBe(false);
     });
