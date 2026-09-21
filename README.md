@@ -230,6 +230,35 @@ can't be found at all, HDM logs that and falls back to launching
 `greeter_path` directly for that cycle rather than refusing to show a login
 screen.
 
+Set `compositor` to `"labwc"` to use
+[`labwc`](https://github.com/labwc/labwc) instead — a full wlroots-based
+stacking window manager (not a single-app kiosk compositor like cage), run
+here single-app-style via its own session flag:
+
+```
+labwc -S /usr/bin/hdm-greeter
+```
+
+This is a genuinely different code path, not just a different binary name:
+`apply_compositor_args()` in `daemon/src/main.rs` builds cage's `-s --
+<cmd>` and labwc's `-S <cmd>` separately, because the two aren't
+interchangeable — labwc doesn't understand `--` as an argument terminator
+at all (`-S -- <path>` would hand it the literal string `"--"` as its
+startup command and the greeter would never run), and only labwc's
+`-S`/`--session` — not its `-s`/`--startup` — exits the compositor when the
+greeter does, which HDM's respawn loop in `launch_greeter()` needs.
+`compositor` values other than `"none"`, `"cage"`, or `"labwc"` are assumed
+to be cage-compatible (most other single-app Wayland kiosk compositors
+are); if that's wrong for some other binary, `apply_compositor_args()` is
+the place to teach HDM its contract too.
+
+Since cage and labwc are separate compositors with their own renderer code
+(wlroots' GLES2/EGL/GBM path, in both cases, unless overridden — see
+`compositor_renderer` below), switching from one to the other is a
+legitimate thing to try if a crash turns out to be specific to one of
+them — see the `Assertion 'surface->initialized' failed` entry under
+Troubleshooting.
+
 HDM always creates and owns `/run/user/<uid>` and sets `XDG_RUNTIME_DIR` to
 it before spawning the compositor/greeter — cage refuses to start at all
 without one. By default that's `/run/user/0` (root); `[general] ->
@@ -308,22 +337,45 @@ in the `video`/`render`/`input` groups and has an active seat session
 (`seatd`, or `systemd-logind` on a system with elogind/logind support) —
 see `config/sysusers.d/hdm.conf` for a starting point.
 
-**Cage crashes with `Error reading events from display: Broken pipe:
-Assertion \`surface->initialized' failed`, right after the DRM/EGL init
-lines in the log (GPU/CRTCs/planes all found fine, so this isn't the
-black-screen device-access issue above).** This was a real bug, fixed:
-`hdm-greeter` is a Tauri/WebKitGTK application, and WebKitGTK's DMA-BUF
-render path is known to crash the *host* compositor — cage, here — rather
-than itself when running nested inside a kiosk Wayland compositor on
-Mesa/i915 (and some other) GPU drivers. The WebKit process's surface gets
-torn down mid-way through initialization, the client connection drops
-(the "Broken pipe" above), and cage hits an internal assertion while
-cleaning it up. `spawn_greeter_command()` in `daemon/src/main.rs` now sets
-`WEBKIT_DISABLE_DMABUF_RENDERER=1` in the greeter's environment, which
-forces WebKitGTK off that render path and avoids the crash, at a small
-cost in GPU compositing performance that doesn't matter for a login
-screen. If you still see this after updating, it may be a different,
-underlying wlroots/cage bug — try updating `cage` itself and check
+**Cage crashes with `Assertion \`surface->initialized' failed` right
+after the DRM/EGL init lines in the log (GPU/CRTCs/planes all found fine,
+so this isn't the black-screen device-access issue above), and the
+greeter's own log separately shows a `Gdk-Message: ... Error reading
+events from display: Broken pipe`.** Read those as two separate crashes,
+in order, not one: the `Gdk-Message` line is printed by GDK *inside the
+greeter process* (`hdm-greeter` is a GTK/WebKitGTK app) when it loses its
+Wayland connection because the *server* — cage — already died. So the
+real crash is cage's `Assertion 'surface->initialized' failed`, and it
+happens in cage/wlroots' own GLES2-over-EGL/GBM renderer while setting up
+its *own* output render surface — before the greeter's WebKit view has
+rendered anything at all. (An earlier version of this note attributed
+this to WebKitGTK's DMA-BUF renderer instead; `hdm-greeter` does hit a
+similar-looking but genuinely different crash from that, which HDM works
+around unconditionally by setting `WEBKIT_DISABLE_DMABUF_RENDERER=1` in
+the greeter's environment — but that setting can't touch a crash that
+happens this early, inside cage itself, before WebKit is in the picture.)
+This is a real cage/wlroots bug on the affected GPU driver combination
+(seen on some Intel i915 setups) — not something fixable from HDM's Rust
+code — but HDM can work around it: set
+```
+[general]
+-> compositor_renderer => pixman
+```
+in `/etc/hdm/hdm.hk` (see the commented-out example already in the
+shipped config) and restart HDM. This forces cage/wlroots onto its
+software Pixman renderer via `WLR_RENDERER=pixman`, which never touches
+EGL/GBM and so never hits this assertion — at some GPU compositing
+performance cost that doesn't matter for a login screen. This isn't
+HDM's default because it's a targeted workaround for specific broken
+driver combinations, not something every install needs. If `pixman`
+doesn't help either, or you'd rather not run a software renderer, try
+switching compositors entirely instead — set `[general] -> compositor =>
+labwc` (with `labwc` installed; see [Compositor](#compositor)). cage and
+labwc are two separate compositors built on the same wlroots libraries
+but with their own renderer/output code, so a crash specific to cage's
+implementation doesn't necessarily follow it to labwc. If neither helps,
+it's likely a different, underlying wlroots bug shared by both — try
+updating `cage`/`wlroots` (or `labwc`/`wlroots`) and check
 https://github.com/cage-kiosk/cage/issues.
 
 ---
