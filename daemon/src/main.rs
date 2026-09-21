@@ -155,7 +155,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
     // recursive call itself is wrapped in Box::pin — the fix is to use a
     // loop instead of self-recursion.
     loop {
-        let (greeter_path, vt_num, compositor) = {
+        let (greeter_path, vt_num, compositor, greeter_user) = {
             let st = state.lock().await;
             (
                 st.config
@@ -167,8 +167,31 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
                     .compositor
                     .clone()
                     .unwrap_or_else(|| "cage".to_string()),
+                st.config.greeter_user.clone(),
             )
         };
+
+        // (uid, gid) 0/0 (root) unless [general] -> greeter_user names an
+        // existing system user — see resolve_greeter_runtime_user(). Either
+        // way we need a real, existing, correctly-owned XDG_RUNTIME_DIR:
+        // cage refuses to start at all without one ("XDG_RUNTIME_DIR is not
+        // set in the environment"), which — since this function relaunches
+        // the greeter in a loop — used to turn into a tight crash/respawn
+        // loop rather than a one-time error.
+        let (uid, gid) = session::resolve_greeter_runtime_user(greeter_user.as_deref());
+        let runtime_dir = format!("/run/user/{}", uid);
+        if let Err(e) = fs::create_dir_all(&runtime_dir) {
+            warn!(
+                "Could not create greeter XDG_RUNTIME_DIR '{}': {} — the compositor will likely fail to start",
+                runtime_dir, e
+            );
+        }
+        unsafe {
+            if let Ok(cpath) = std::ffi::CString::new(runtime_dir.clone()) {
+                libc::chown(cpath.as_ptr(), uid, gid);
+                libc::chmod(cpath.as_ptr(), 0o700);
+            }
+        }
 
         let use_compositor = !compositor.is_empty() && !compositor.eq_ignore_ascii_case("none");
         if use_compositor {
@@ -182,9 +205,9 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
         }
 
         let spawn_result = if use_compositor {
-            spawn_greeter_command(&compositor, &greeter_path)
+            spawn_greeter_command(&compositor, &greeter_path, &runtime_dir, uid, gid)
         } else {
-            spawn_greeter_command("none", &greeter_path)
+            spawn_greeter_command("none", &greeter_path, &runtime_dir, uid, gid)
         };
 
         let mut child = match spawn_result {
@@ -198,7 +221,7 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
                     "Failed to launch compositor '{}': {} — falling back to launching '{}' directly this cycle",
                     compositor, e, greeter_path
                 );
-                match spawn_greeter_command("none", &greeter_path) {
+                match spawn_greeter_command("none", &greeter_path, &runtime_dir, uid, gid) {
                     Ok(child) => child,
                     Err(e2) => {
                         error!("Failed to launch greeter '{}' directly too: {}", greeter_path, e2);
@@ -217,10 +240,33 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
         let pid = child.id().unwrap_or(0);
         info!("Greeter process PID: {}", pid);
         state.lock().await.greeter_pid = Some(pid);
-        let _ = child.wait().await;
-        info!("Greeter exited — relaunching");
+        let exit_status = child.wait().await;
         state.lock().await.greeter_pid = None;
-        // Loop around and relaunch the greeter after the session ends.
+
+        // If the greeter (or its compositor) exits almost instantly and
+        // keeps doing so, respawning it as fast as possible just burns CPU
+        // and floods the log (exactly what happened before this XDG_RUNTIME_DIR
+        // fix — cage was exiting in well under a second, forever). A short,
+        // fixed backoff turns "infinite tight loop" into "a few readable log
+        // lines per second" so the real error stays visible, without giving
+        // up on retrying entirely.
+        match exit_status {
+            Ok(status) if status.success() => {
+                info!("Greeter exited normally — relaunching");
+            }
+            Ok(status) => {
+                warn!(
+                    "Greeter exited with {} — relaunching in 1s (see the log lines above this for why)",
+                    status
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(e) => {
+                warn!("Failed to wait on greeter process: {} — relaunching in 1s", e);
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+        // Loop around and relaunch the greeter.
     }
 }
 
@@ -238,9 +284,28 @@ async fn launch_greeter(state: &Arc<Mutex<DaemonState>>) {
 /// itself is just a windowed application, not a compositor. Any other
 /// drop-in-compatible single-app compositor honoring the same `-s -- <cmd>`
 /// contract works too — this isn't hardcoded to literally require `cage`.
+///
+/// `runtime_dir` MUST already exist, owned by `uid`/`gid`, mode 0700 — see
+/// the caller, `launch_greeter()` — before this is called: cage hard-fails
+/// immediately ("XDG_RUNTIME_DIR is not set in the environment") without a
+/// valid one, and since `launch_greeter()` relaunches on exit, a missing
+/// `XDG_RUNTIME_DIR` used to turn into a tight crash/respawn loop rather
+/// than a one-time, easy-to-spot error.
+///
+/// `(uid, gid)` are only actually dropped to (via a `pre_exec` `setgid`
+/// then `setuid`) when `uid != 0` — i.e. only when `[general] ->
+/// greeter_user` names a real, resolvable system user. Left unset (the
+/// default), the greeter keeps running as root, same as historically:
+/// running it unprivileged additionally requires that user to already have
+/// the access cage needs to open `/dev/dri`/`/dev/input` directly (the
+/// `video`/`render`/`input` groups, and ideally an active `seatd` or
+/// `systemd-logind` seat session) — see the README's Compositor section.
 fn spawn_greeter_command(
     compositor: &str,
     greeter_path: &str,
+    runtime_dir: &str,
+    uid: u32,
+    gid: u32,
 ) -> std::io::Result<tokio::process::Child> {
     let mut cmd = if compositor.eq_ignore_ascii_case("none") || compositor.is_empty() {
         tokio::process::Command::new(greeter_path)
@@ -253,5 +318,17 @@ fn spawn_greeter_command(
     cmd.env("HDM_SOCKET", SOCKET_PATH)
         .env("HDM_CONFIG", CONFIG_PATH)
         .env("XDG_SESSION_TYPE", "wayland")
-        .spawn()
+        .env("XDG_RUNTIME_DIR", runtime_dir);
+
+    if uid != 0 {
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::setgid(gid);
+                libc::setuid(uid);
+                Ok(())
+            });
+        }
+    }
+
+    cmd.spawn()
 }
