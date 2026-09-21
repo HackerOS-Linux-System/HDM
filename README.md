@@ -15,7 +15,14 @@ HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
 - 🖼️ **Aurora glassmorphism UI** — animated background, user avatars
 - 🖥️ **Session management** — Wayland & X11 sessions from `.desktop` files
 - 👥 **Multi-user** — lists system users (UID ≥ 1000), user avatars from `~/.face`
-- ⚡ **Autologin** support with configurable delay
+- ⚡ **Autologin** support with configurable delay, plus marker-file **live-mode
+  autologin** for live/installer boots (no config, no created user needed —
+  see [Autologin](#autologin) below)
+- 🎯 **Configurable default session** — pick which `.desktop` session HDM
+  pre-selects and launches into (see [Default session](#default-session))
+- 🪟 **Cage-composited greeter** — the greeter runs inside the
+  [`cage`](https://github.com/cage-kiosk/cage) Wayland kiosk compositor by
+  default (see [Compositor](#compositor))
 - 🔌 **Power menu** — shutdown, reboot, suspend, hibernate with countdown
 - 🔒 **Brute-force protection** — 5 attempt limit per session
 - 📋 **systemd integration** — replaces `display-manager.service`
@@ -26,25 +33,44 @@ HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│  TTY1 / VT1                                      │
-│                                                   │
-│  ┌─────────────────────────────────────────────┐ │
-│  │  hdm (daemon, root)                         │ │
-│  │    PAM authentication                        │ │
-│  │    Session launching (drop privs to user)    │ │
-│  │    VT management                             │ │
-│  │    IPC: /run/hdm/hdm.sock                 │ │
-│  └───────────────┬─────────────────────────────┘ │
-│                  │ Unix socket (JSON)             │
-│  ┌───────────────▼─────────────────────────────┐ │
-│  │  hdm-greeter (Tauri, runs as _hdm user)     │ │
-│  │    Solid.js UI (TypeScript + Tailwind)       │ │
-│  │    Clock, user list, password input          │ │
-│  │    Session picker, power menu                │ │
-│  └─────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│  TTY1 / VT1                                            │
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐ │
+│  │  hdm (daemon, root)                                │ │
+│  │    PAM / crypt(3) authentication                   │ │
+│  │    Session launching (drop privs to user)          │ │
+│  │    VT management                                   │ │
+│  │    Spawns + supervises the greeter (see below)     │ │
+│  │    IPC: /run/hdm/hdm.sock                          │ │
+│  └───────────────┬─────────────────────────────────────┘ │
+│                  │ spawns, as a child process           │
+│  ┌───────────────▼─────────────────────────────────────┐ │
+│  │  cage -s -- hdm-greeter                              │ │
+│  │    (single-app Wayland kiosk compositor, see         │ │
+│  │     "Compositor" below — hosts the WebKit view       │ │
+│  │     the greeter itself has no compositor of its own) │ │
+│  │  ┌─────────────────────────────────────────────────┐ │ │
+│  │  │  hdm-greeter (Tauri, runs as _hdm user)          │ │ │
+│  │  │    Solid.js UI (TypeScript + Tailwind)           │ │ │
+│  │  │    Clock, user list, password input              │ │ │
+│  │  │    Session picker, power menu                    │ │ │
+│  │  └─────────────────┬─────────────────────────────────┘ │ │
+│  └────────────────────┼─────────────────────────────────┘ │
+│                       │ Unix socket (JSON)                │
+│                       ▼                                   │
+│              back to hdm's IPC server above                │
+└───────────────────────────────────────────────────────┘
 ```
+
+**Does `hdm` launch `hdm-greeter` itself?** Yes — `hdm` is the only thing
+that ever starts `hdm-greeter`; there's no separate systemd unit for it.
+`launch_greeter()` in `daemon/src/main.rs` spawns it (by default wrapped in
+`cage`, see below) on every boot and again every time the greeter process
+exits (e.g. after "Cancel" or a crash), in a loop for as long as `hdm`
+itself is running. `hdm-greeter` then connects back to `hdm`'s Unix socket
+(`/run/hdm/hdm.sock`) as an ordinary IPC client — it never talks to PAM,
+`/etc/shadow`, or spawns sessions itself.
 
 ---
 
@@ -101,11 +127,19 @@ not TOML:
 -> show_user_list => true
 -> allow_root     => false
 -> minimum_uid    => 1000
+-> compositor     => cage
 
-! Autologin (optional) — uncomment and fill in to enable:
-! [autologin]
+[autologin]
+-> live_detect => true
+-> live_marker => ".config/Blue-Environment/.live"
+
+! Force autologin into a specific user/session (optional) — uncomment and
+! fill in:
 ! -> user    => username
 ! -> session => blue-environment
+
+[default]
+-> session => blue-environment
 
 [power]
 -> shutdown  => "shutdown -h now"
@@ -119,6 +153,82 @@ second, user-editable layer at `~/.config/hdm/hdm.hk` (same `.hk` format,
 auto-created with the same defaults the first time the greeter runs — see
 `ensure_user_default_config()` in `greeter/src/main.rs`), and only then to
 the greeter's own built-in defaults.
+
+### Autologin
+
+There are two independent autologin mechanisms:
+
+1. **Config-based autologin** — `[autologin] -> user` (+ optional `session`
+   and `delay`) in hdm.hk. Skips the greeter entirely and launches straight
+   into that user's session after `delay` seconds. If `session` is left
+   unset, it uses the [default session](#default-session) instead of a
+   hardcoded value.
+
+2. **Live-mode (marker-file) autologin** — for live-USB / installer boots
+   (e.g. Blue Installer). Independent of `user`/`session`/`delay` above and
+   needs **no `[autologin]` content at all** to work: if *any* user's home
+   directory contains the marker file named by `live_marker` (default
+   `.config/Blue-Environment/.live`), HDM logs that user in automatically —
+   no password prompt, no `[autologin] -> user` to configure, and the
+   account doesn't need to fall inside `minimum_uid`/`maximum_uid` either
+   (`daemon/src/users.rs::find_live_user` deliberately doesn't gate on that
+   range, since a live image's built-in account commonly sits outside
+   whatever range an admin configures for an *installed* system). Root and
+   `nologin`/`false`-shell accounts are still excluded unless `allow_root`
+   is set. Blue Installer deletes the marker file once installation
+   completes, so the next boot goes back to a normal password prompt.
+
+   This is on by default; disable it with `[autologin] -> live_detect =>
+   false`, or point it at a different marker with `[autologin] ->
+   live_marker => "..."` (relative to each candidate user's home — a
+   leading `~/` or `/` is stripped and ignored).
+
+   Note that this still requires an actual Linux user account to exist
+   (Unix has no way to run a session without a UID/GID to drop privileges
+   to) — what it does *not* require is that account to have been set up
+   through HDM/the greeter, given an `[autologin]` entry, or fall inside
+   the configured UID range. A live image's baked-in account is enough.
+
+Config-based autologin takes priority if both are configured; live-mode is
+only checked when `[autologin] -> user` is unset.
+
+### Default session
+
+`[default] -> session` names the session id HDM treats as the default —
+matched against the `id` of a `.desktop` file found by scanning `[general]
+-> sessions_dir`, or the built-in `"blue-environment"` fallback session
+(which always exists even with no matching `.desktop` file — see
+`list_sessions()` in `daemon/src/session.rs`). It's used to:
+
+- pre-select a session in the greeter's session picker (sent to the
+  greeter as `default_session` in the daemon's `GetInfo`/welcome IPC
+  response),
+- launch into for live-mode autologin, and
+- launch into for a config-based `[autologin]` entry that omits `session`.
+
+If unset, or if it names something `sessions_dir` doesn't actually contain,
+HDM logs a warning and falls back to `"blue-environment"`.
+
+### Compositor
+
+`[general] -> compositor` (default `cage`) is the Wayland compositor HDM
+wraps `greeter_path` in before launching it — `hdm-greeter` is a windowed
+Tauri/WebKit application, not a compositor, so something has to give it a
+Wayland display to render into pre-login. By default HDM runs it as:
+
+```
+cage -s -- /usr/bin/hdm-greeter
+```
+
+[`cage`](https://github.com/cage-kiosk/cage) is a minimal single-application
+Wayland kiosk compositor built exactly for this (fullscreen one app, exit
+when it exits) and needs to be installed and on `$PATH` (e.g. `apt install
+cage` / `dnf install cage`). Set `compositor` to `"none"` to launch
+`greeter_path` directly instead (e.g. for an X11 greeter build, or one that
+brings up its own compositor) — and if the configured compositor binary
+can't be found at all, HDM logs that and falls back to launching
+`greeter_path` directly for that cycle rather than refusing to show a login
+screen.
 
 ---
 
