@@ -7,9 +7,30 @@ use tracing::warn;
 pub struct HdmConfig {
     pub greeter_path: Option<String>,
     pub vt: Option<u8>,
+    /// Wayland compositor the daemon wraps `greeter_path` in before
+    /// spawning it (`[general] -> compositor` in hdm.hk) — see
+    /// `main.rs::spawn_greeter_command`. `"cage"` by default: the Tauri /
+    /// WebKit greeter is just a windowed application, not a compositor, so
+    /// it needs something to hand it a Wayland display pre-login. Set to
+    /// `"none"` to spawn `greeter_path` directly (e.g. an X11 greeter, or
+    /// one that brings up its own compositor).
+    pub compositor: Option<String>,
     pub autologin_user: Option<String>,
     pub autologin_session: Option<String>,
     pub autologin_delay: Option<u64>,
+    /// Whether `~/.config/Blue-Environment/.live`-style marker-file
+    /// autologin (`daemon/src/users.rs::find_live_user`) is active at all.
+    /// `[autologin] -> live_detect` in hdm.hk; defaults to `true`. This is
+    /// independent of `autologin_user`/`autologin_session`/`autologin_delay`
+    /// above — it needs no `[autologin]` content of its own to work, only
+    /// this toggle to turn it off if ever undesired.
+    pub live_autologin: Option<bool>,
+    /// Path to the live-mode marker file, relative to a candidate user's
+    /// home directory (`[autologin] -> live_marker` in hdm.hk). Defaults to
+    /// `.config/Blue-Environment/.live`. A leading `~/` or `/` is stripped
+    /// so the value always resolves relative to *that* user's home — see
+    /// `users::live_marker_for_home`.
+    pub live_marker_path: Option<String>,
     pub session_timeout: Option<u64>,
     pub theme: Option<String>,
     pub background: Option<String>,
@@ -20,6 +41,13 @@ pub struct HdmConfig {
     pub minimum_uid: Option<u32>,
     pub maximum_uid: Option<u32>,
     pub sessions_dir: Option<Vec<String>>,
+    /// `[default] -> session` in hdm.hk: the session id (matching a
+    /// `.desktop` file's stem under `sessions_dir`, or the built-in
+    /// `"blue-environment"` fallback) HDM treats as the default — used to
+    /// pre-select a session in the greeter's session picker and as the
+    /// session live-mode / bare `[autologin]` entries launch into when they
+    /// don't name one explicitly. See `session::get_default_session`.
+    pub default_session: Option<String>,
     pub power: Option<PowerConfig>,
 }
 
@@ -36,9 +64,12 @@ impl Default for HdmConfig {
         Self {
             greeter_path: Some("/usr/bin/hdm-greeter".to_string()),
             vt: Some(1),
+            compositor: Some("cage".to_string()),
             autologin_user: None,
             autologin_session: None,
             autologin_delay: Some(0),
+            live_autologin: Some(true),
+            live_marker_path: Some(".config/Blue-Environment/.live".to_string()),
             session_timeout: Some(0),
             theme: Some("graphite".to_string()),
             background: Some(
@@ -64,6 +95,7 @@ impl Default for HdmConfig {
                 "/usr/share/xsessions".to_string(),
                 "/usr/local/share/wayland-sessions".to_string(),
             ]),
+            default_session: Some("blue-environment".to_string()),
             power: Some(PowerConfig::default()),
         }
     }
@@ -147,6 +179,7 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
 
     let general = section(config, "general");
     let autologin = section(config, "autologin");
+    let default_section = section(config, "default");
     let power_raw = section(config, "power");
 
     HdmConfig {
@@ -154,11 +187,23 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
             .and_then(|g| get_string(g, "greeter_path"))
             .or(defaults.greeter_path),
         vt: general.and_then(|g| get_u8(g, "vt")).or(defaults.vt),
+        compositor: general
+            .and_then(|g| get_string(g, "compositor"))
+            .or(defaults.compositor),
         autologin_user: autologin.and_then(|a| get_string(a, "user")),
         autologin_session: autologin.and_then(|a| get_string(a, "session")),
         autologin_delay: autologin
             .and_then(|a| get_u64(a, "delay"))
             .or(defaults.autologin_delay),
+        live_autologin: autologin
+            .and_then(|a| get_bool(a, "live_detect"))
+            .or(defaults.live_autologin),
+        live_marker_path: autologin
+            .and_then(|a| get_string(a, "live_marker"))
+            .or(defaults.live_marker_path),
+        default_session: default_section
+            .and_then(|d| get_string(d, "session"))
+            .or(defaults.default_session),
         session_timeout: general
             .and_then(|g| get_u64(g, "session_timeout"))
             .or(defaults.session_timeout),
@@ -265,11 +310,49 @@ pub fn default_config_content() -> &'static str {
 -> clock_format   => "%H:%M"
 -> sessions_dir   => ["/usr/share/wayland-sessions", "/usr/share/xsessions", "/usr/local/share/wayland-sessions"]
 
-! Uncomment and fill in to enable autologin:
-! [autologin]
+! Wayland compositor HDM wraps the greeter binary in before launching it
+! (see spawn_greeter_command() in daemon/src/main.rs). The greeter is a
+! windowed Tauri/WebKit app, not a compositor itself, so it needs one to
+! actually get a display to render into pre-login. "cage" (a single-app
+! Wayland kiosk compositor, see https://github.com/cage-kiosk/cage) is
+! used by default; set to "none" to launch greeter_path directly instead.
+! If the named compositor binary can't be found, HDM logs it and falls
+! back to launching greeter_path directly for that cycle rather than
+! refusing to show a login screen at all.
+-> compositor => cage
+
+[autologin]
+! Live-mode autologin (Blue Installer / live-boot media) — active by
+! default and independent of everything else in this section: if ANY
+! user's home directory contains the marker file named by live_marker
+! below, HDM logs that user straight in with no password prompt and no
+! further [autologin] configuration required at all — no user/session/
+! delay needs to be set, and the account doesn't need to fall inside
+! minimum_uid/maximum_uid above either (a live image's built-in user
+! commonly doesn't). See daemon/src/users.rs::find_live_user. Blue
+! Installer deletes the marker file once installation completes, so the
+! next boot goes back to a normal password prompt.
+-> live_detect => true
+-> live_marker => ".config/Blue-Environment/.live"
+
+! Uncomment and fill in to force autologin unconditionally into a specific
+! user/session instead (skips the greeter, live-mode detection, and any
+! password prompt entirely):
 ! -> user    => username
 ! -> session => blue-environment
 ! -> delay   => 0
+
+[default]
+! ID of the session HDM treats as the default: matched against the "id"
+! of a .desktop file found by scanning [general] -> sessions_dir above
+! (see daemon/src/session.rs::list_sessions), or the built-in
+! "blue-environment" fallback session, which always exists even with no
+! matching .desktop file. Used to pre-select a session in the greeter's
+! session picker, and as the session live-mode autologin (and any
+! [autologin] entry that omits `session`) launches into. Falls back to
+! "blue-environment" if unset or if it doesn't match any session actually
+! found — see daemon/src/session.rs::get_default_session.
+-> session => blue-environment
 
 [power]
 -> shutdown  => "shutdown -h now"
@@ -359,6 +442,14 @@ mod default_config_tests {
         // get no wallpaper at all instead of the packaged default. Guard
         // against that regressing.
         assert_eq!(cfg.background, HdmConfig::default().background);
+        // Same guard, extended to the fields this changeset adds — a
+        // hand-edited hdm.hk that only sets `theme` must still get the
+        // "cage" compositor, live-mode detection, the default live marker
+        // path, and the "blue-environment" default session, not None/off.
+        assert_eq!(cfg.compositor, HdmConfig::default().compositor);
+        assert_eq!(cfg.live_autologin, HdmConfig::default().live_autologin);
+        assert_eq!(cfg.live_marker_path, HdmConfig::default().live_marker_path);
+        assert_eq!(cfg.default_session, HdmConfig::default().default_session);
     }
 
     #[test]
@@ -378,6 +469,78 @@ mod default_config_tests {
         assert_eq!(cfg.autologin_user, Some("alice".to_string()));
         assert_eq!(cfg.autologin_session, Some("blue-environment".to_string()));
         assert_eq!(cfg.autologin_delay, Some(3));
+    }
+
+    #[test]
+    fn live_mode_settings_default_on_with_the_standard_marker_path() {
+        // No [autologin] section at all — live_detect/live_marker must
+        // still come through as HdmConfig::default() gives them (on, with
+        // the Blue Installer marker path), not None, so a system with no
+        // hdm.hk customization at all keeps working live-mode autologin.
+        let cfg = load_config_str(default_config_content()).unwrap();
+        assert_eq!(cfg.live_autologin, Some(true));
+        assert_eq!(
+            cfg.live_marker_path,
+            Some(".config/Blue-Environment/.live".to_string())
+        );
+    }
+
+    #[test]
+    fn live_mode_settings_are_overridable() {
+        let cfg = load_config_str(
+            r#"
+[autologin]
+-> live_detect => false
+-> live_marker => ".config/my-installer/.live-marker"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.live_autologin, Some(false));
+        assert_eq!(
+            cfg.live_marker_path,
+            Some(".config/my-installer/.live-marker".to_string())
+        );
+        // Untouched fields in the same section still fall back normally.
+        assert_eq!(cfg.autologin_user, None);
+    }
+
+    #[test]
+    fn default_section_session_is_read_when_present() {
+        let cfg = load_config_str(
+            r#"
+[default]
+-> session => gnome
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.default_session, Some("gnome".to_string()));
+    }
+
+    #[test]
+    fn missing_default_section_falls_back_to_blue_environment() {
+        let cfg = load_config_str(
+            r#"
+[general]
+-> theme => midnight
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.default_session, Some("blue-environment".to_string()));
+    }
+
+    #[test]
+    fn compositor_is_read_from_general_and_can_be_disabled() {
+        let cfg = load_config_str(
+            r#"
+[general]
+-> compositor => none
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.compositor, Some("none".to_string()));
+
+        let cfg_default = load_config_str("[general]\n-> theme => midnight\n").unwrap();
+        assert_eq!(cfg_default.compositor, Some("cage".to_string()));
     }
 
     #[test]
