@@ -131,8 +131,14 @@ export default function App() {
       setWallpaper(wp);
       setShowGuestOption(usersData.some((u) => u.username === 'guest'));
 
+      // Prefer the session HDM itself resolved as the default (hdm.hk's
+      // [default] -> session, validated server-side against what's
+      // actually under sessions_dir — see get_default_session() on the
+      // daemon side) over hardcoding an id here.
       const defaultSession =
-        sessionsData.find((s) => s.id === 'blue-environment') ?? sessionsData[0];
+        sessionsData.find((s) => s.id === daemonInfo.default_session) ??
+        sessionsData.find((s) => s.id === 'blue-environment') ??
+        sessionsData[0];
       if (defaultSession) setSelectedSession(defaultSession.id);
 
       loadAvatars(usersData);
