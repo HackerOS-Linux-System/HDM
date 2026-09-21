@@ -71,6 +71,15 @@
 ! refusing to show a login screen at all.
 -> compositor => cage
 
+! Uncomment to run the greeter (and the compositor above) as a specific
+! unprivileged system user instead of root. Only do this once that user
+! has the device access cage needs (/dev/dri, /dev/input — typically the
+! video/render/input groups, plus an active seatd/systemd-logind seat
+! session) — otherwise cage will simply fail to open the display as that
+! user, the same way it fails without XDG_RUNTIME_DIR. See
+! daemon/src/session.rs::resolve_greeter_runtime_user.
+! -> greeter_user => _hdm
+
 [autologin]
 ! Live-mode autologin (Blue Installer / live-boot media) — active by
 ! default and independent of everything else in this section: if ANY
