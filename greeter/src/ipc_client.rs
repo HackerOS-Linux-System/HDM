@@ -33,6 +33,7 @@ pub struct DaemonInfoResponse {
     pub uptime: u64,
     pub os_name: String,
     pub os_version: String,
+    pub default_session: String,
 }
 
 #[derive(Serialize)]
@@ -91,6 +92,7 @@ enum Response {
         uptime: u64,
         os_name: String,
         os_version: String,
+        default_session: String,
     },
     PowerResult {
         success: bool,
@@ -120,6 +122,7 @@ impl HdmClient {
                 uptime,
                 os_name,
                 os_version,
+                default_session,
             } => Ok((
                 client,
                 DaemonInfoResponse {
@@ -128,6 +131,7 @@ impl HdmClient {
                     uptime,
                     os_name,
                     os_version,
+                    default_session,
                 },
             )),
             _ => Err("Unexpected welcome from daemon".to_string()),
