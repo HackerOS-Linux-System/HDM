@@ -15,6 +15,14 @@ pub struct HdmConfig {
     /// `"none"` to spawn `greeter_path` directly (e.g. an X11 greeter, or
     /// one that brings up its own compositor).
     pub compositor: Option<String>,
+    /// System user to run the greeter (and the compositor wrapping it) as,
+    /// instead of root (`[general] -> greeter_user` in hdm.hk). `None` by
+    /// default — the greeter runs as root, same as it always has; only set
+    /// this once that user has been granted the device access cage needs
+    /// (`/dev/dri`, `/dev/input` — typically the `video`/`render`/`input`
+    /// groups plus an active `seatd`/`systemd-logind` seat session), or
+    /// cage will simply fail to open the display as that user instead.
+    pub greeter_user: Option<String>,
     pub autologin_user: Option<String>,
     pub autologin_session: Option<String>,
     pub autologin_delay: Option<u64>,
@@ -65,6 +73,7 @@ impl Default for HdmConfig {
             greeter_path: Some("/usr/bin/hdm-greeter".to_string()),
             vt: Some(1),
             compositor: Some("cage".to_string()),
+            greeter_user: None,
             autologin_user: None,
             autologin_session: None,
             autologin_delay: Some(0),
@@ -190,6 +199,9 @@ fn from_hk(config: &HkConfig) -> HdmConfig {
         compositor: general
             .and_then(|g| get_string(g, "compositor"))
             .or(defaults.compositor),
+        greeter_user: general
+            .and_then(|g| get_string(g, "greeter_user"))
+            .or(defaults.greeter_user),
         autologin_user: autologin.and_then(|a| get_string(a, "user")),
         autologin_session: autologin.and_then(|a| get_string(a, "session")),
         autologin_delay: autologin
@@ -321,6 +333,15 @@ pub fn default_config_content() -> &'static str {
 ! refusing to show a login screen at all.
 -> compositor => cage
 
+! Uncomment to run the greeter (and the compositor above) as a specific
+! unprivileged system user instead of root. Only do this once that user
+! has the device access cage needs (/dev/dri, /dev/input — typically the
+! video/render/input groups, plus an active seatd/systemd-logind seat
+! session) — otherwise cage will simply fail to open the display as that
+! user, the same way it fails without XDG_RUNTIME_DIR. See
+! daemon/src/session.rs::resolve_greeter_runtime_user.
+! -> greeter_user => _hdm
+
 [autologin]
 ! Live-mode autologin (Blue Installer / live-boot media) — active by
 ! default and independent of everything else in this section: if ANY
@@ -447,6 +468,7 @@ mod default_config_tests {
         // "cage" compositor, live-mode detection, the default live marker
         // path, and the "blue-environment" default session, not None/off.
         assert_eq!(cfg.compositor, HdmConfig::default().compositor);
+        assert_eq!(cfg.greeter_user, HdmConfig::default().greeter_user);
         assert_eq!(cfg.live_autologin, HdmConfig::default().live_autologin);
         assert_eq!(cfg.live_marker_path, HdmConfig::default().live_marker_path);
         assert_eq!(cfg.default_session, HdmConfig::default().default_session);
@@ -541,6 +563,24 @@ mod default_config_tests {
 
         let cfg_default = load_config_str("[general]\n-> theme => midnight\n").unwrap();
         assert_eq!(cfg_default.compositor, Some("cage".to_string()));
+    }
+
+    #[test]
+    fn greeter_user_defaults_to_unset_meaning_root() {
+        let cfg = load_config_str("[general]\n-> theme => midnight\n").unwrap();
+        assert_eq!(cfg.greeter_user, None);
+    }
+
+    #[test]
+    fn greeter_user_is_read_when_present() {
+        let cfg = load_config_str(
+            r#"
+[general]
+-> greeter_user => _hdm
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.greeter_user, Some("_hdm".to_string()));
     }
 
     #[test]
