@@ -32,6 +32,8 @@ export interface DaemonInfo {
   os_name: string;
   os_version: string;
   connected: boolean;
+  /** HDM's resolved `[default] -> session` from hdm.hk — see daemon/src/session.rs::get_default_session. */
+  default_session: string;
 }
 
 export type Screen =
