@@ -1,3 +1,12 @@
+# Recommended package: `cage` (a single-application Wayland kiosk
+# compositor, https://github.com/cage-kiosk/cage). HDM spawns it itself as
+# a plain subprocess to host the greeter's Wayland display (see
+# [general] -> compositor in hdm.hk and spawn_greeter_command() in
+# daemon/src/main.rs) — it is not a separate systemd unit and needs no
+# Requires=/After= here, just to be installed and on $PATH. If it's
+# missing, HDM logs that and falls back to launching hdm-greeter directly
+# instead of refusing to start.
+
 [Unit]
 Description=HDM — HackerOS Display Manager
 Documentation=https://github.com/HackerOS-Linux-System/HDM
