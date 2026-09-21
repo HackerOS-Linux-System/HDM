@@ -2,7 +2,7 @@ use crate::{ipc::SessionInfo, DaemonState};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, sync::Arc};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,6 +84,38 @@ pub async fn list_sessions(state: &Arc<Mutex<DaemonState>>) -> Vec<SessionInfo> 
     });
 
     sessions
+}
+
+/// Resolves the effective default session: `[default] -> session` from
+/// hdm.hk if it names a session `list_sessions` actually found under
+/// `sessions_dir` (or the built-in "blue-environment" fallback, which
+/// `list_sessions` guarantees is always present), otherwise
+/// "blue-environment" itself. Used both to tell the greeter which session
+/// to pre-select (`DaemonResponse::Info::default_session`) and as the
+/// session live-mode autologin and bare `[autologin]` entries (ones that
+/// don't set `session` explicitly) launch into — see `main.rs`.
+pub async fn get_default_session(state: &Arc<Mutex<DaemonState>>) -> String {
+    let configured = {
+        let st = state.lock().await;
+        st.config.default_session.clone()
+    };
+    let sessions = list_sessions(state).await;
+    resolve_default_session(configured, &sessions)
+}
+
+/// Pure helper split out of `get_default_session` so the matching/fallback
+/// logic is unit-testable without a `DaemonState` or filesystem scan.
+fn resolve_default_session(configured: Option<String>, sessions: &[SessionInfo]) -> String {
+    if let Some(id) = configured {
+        if sessions.iter().any(|s| s.id == id) {
+            return id;
+        }
+        warn!(
+            "[default] -> session '{}' does not match any session found under sessions_dir — falling back to 'blue-environment'",
+            id
+        );
+    }
+    "blue-environment".to_string()
 }
 
 fn parse_session_desktop(path: &std::path::PathBuf, session_type: &str) -> Option<SessionInfo> {
@@ -324,4 +356,45 @@ fn get_user_info(username: &str) -> Option<UserInfo> {
             None
         }
     })
+}
+
+#[cfg(test)]
+mod default_session_tests {
+    use super::*;
+
+    fn session(id: &str) -> SessionInfo {
+        SessionInfo {
+            id: id.to_string(),
+            name: id.to_string(),
+            exec: format!("/usr/bin/{id}"),
+            session_type: "wayland".to_string(),
+            desktop_names: vec![],
+            icon: None,
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn configured_session_wins_when_it_exists() {
+        let sessions = vec![session("blue-environment"), session("gnome")];
+        assert_eq!(
+            resolve_default_session(Some("gnome".to_string()), &sessions),
+            "gnome"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_blue_environment_when_configured_session_is_missing() {
+        let sessions = vec![session("blue-environment"), session("gnome")];
+        assert_eq!(
+            resolve_default_session(Some("plasma".to_string()), &sessions),
+            "blue-environment"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_blue_environment_when_unconfigured() {
+        let sessions = vec![session("blue-environment"), session("gnome")];
+        assert_eq!(resolve_default_session(None, &sessions), "blue-environment");
+    }
 }
