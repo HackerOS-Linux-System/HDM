@@ -358,6 +358,51 @@ fn get_user_info(username: &str) -> Option<UserInfo> {
     })
 }
 
+/// Resolves which (uid, gid) the greeter — and the compositor it's wrapped
+/// in, see `main.rs::launch_greeter` — should run as.
+///
+/// `None` (no `[general] -> greeter_user` set, the default) resolves to
+/// root (0, 0): the greeter keeps running as root, same as historically.
+/// A configured username that isn't found in `/etc/passwd` also falls back
+/// to root, with a warning, rather than refusing to show a login screen
+/// over what's likely a typo or a not-yet-created service account.
+pub(crate) fn resolve_greeter_runtime_user(username: Option<&str>) -> (u32, u32) {
+    let Some(username) = username else {
+        return (0, 0);
+    };
+    match get_user_info(username) {
+        Some(info) => (info.uid, info.gid),
+        None => {
+            warn!(
+                "[general] -> greeter_user '{}' not found in /etc/passwd — running the greeter as root instead",
+                username
+            );
+            (0, 0)
+        }
+    }
+}
+
+#[cfg(test)]
+mod greeter_runtime_user_tests {
+    use super::*;
+
+    #[test]
+    fn unset_resolves_to_root() {
+        assert_eq!(resolve_greeter_runtime_user(None), (0, 0));
+    }
+
+    #[test]
+    fn unknown_username_falls_back_to_root() {
+        // Extremely unlikely to exist on any real system — exercises the
+        // "configured but not found" fallback path without touching a
+        // real /etc/passwd entry.
+        assert_eq!(
+            resolve_greeter_runtime_user(Some("__hdm_test_user_that_does_not_exist__")),
+            (0, 0)
+        );
+    }
+}
+
 #[cfg(test)]
 mod default_session_tests {
     use super::*;
