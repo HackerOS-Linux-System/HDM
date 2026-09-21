@@ -320,6 +320,25 @@ fn spawn_greeter_command(
         .env("XDG_SESSION_TYPE", "wayland")
         .env("XDG_RUNTIME_DIR", runtime_dir);
 
+    // hdm-greeter is a Tauri/WebKitGTK app, and WebKitGTK's DMA-BUF
+    // renderer is well known to crash the *host* compositor (cage here)
+    // rather than itself when it runs inside a nested/kiosk Wayland
+    // compositor on Mesa/i915 (and several other) GPU drivers: the
+    // WebKit process hands the compositor a DMA-BUF-backed surface that
+    // the compositor's renderer can't import, the client connection then
+    // drops (seen here as "Broken pipe" while cage is reading display
+    // events), and cage aborts on an internal
+    // `assert(surface->initialized)` while tearing that surface down —
+    // not a bug in HDM's own code, but one only HDM (as the process that
+    // launches the greeter) is in a position to work around. Forcing
+    // WebKit onto its non-DMA-BUF (software/EGL fallback) rendering path
+    // avoids the crash entirely, at a small, acceptable cost in GPU
+    // compositing performance for what is just a login screen. Only
+    // relevant when a compositor is actually hosting the greeter — a
+    // `compositor = "none"` X11 greeter doesn't hit this path — but it's
+    // harmless to set unconditionally, so it isn't gated on that here.
+    cmd.env("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+
     if uid != 0 {
         unsafe {
             cmd.pre_exec(move || {
