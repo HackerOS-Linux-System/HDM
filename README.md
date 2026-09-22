@@ -367,8 +367,33 @@ software Pixman renderer via `WLR_RENDERER=pixman`, which never touches
 EGL/GBM and so never hits this assertion — at some GPU compositing
 performance cost that doesn't matter for a login screen. This isn't
 HDM's default because it's a targeted workaround for specific broken
-driver combinations, not something every install needs. If `pixman`
-doesn't help either, or you'd rather not run a software renderer, try
+driver combinations, not something every install needs.
+
+**If you set `compositor_renderer => pixman` and still hit the same
+`Assertion 'surface->initialized' failed`, but now preceded by `libEGL
+warning: failed to get driver name for fd -1` / `MESA-LOADER: failed to
+retrieve device information` instead of any cage-side `[render/egl.c:...]`
+lines** — that's not the same crash recurring, it's the *next* one: cage
+itself is fine now (the pixman renderer log line and successful DRM
+modesetting confirm that), but `hdm-greeter` is crashing instead, because
+it tries to open its own hardware-accelerated EGL/GL context (WebKitGTK's
+regular accelerated-compositing path — a different thing from the DMA-BUF
+renderer `WEBKIT_DISABLE_DMABUF_RENDERER` disables), and a `pixman`-backed
+cage advertises no GBM/DRM device for clients to use, so that EGL init
+gets handed an invalid fd and the greeter dies mid-setup — which cage
+then reports as the same assertion while tearing down that now-orphaned
+surface. Current versions of HDM already set
+`WEBKIT_DISABLE_COMPOSITING_MODE=1` unconditionally in the greeter's
+environment for exactly this case (forces WebKit fully onto software/Cairo
+rendering, no GL/EGL at all — see `spawn_greeter_command()` in
+`daemon/src/main.rs`), so if you're still seeing it, make sure you're
+actually running a build from after that was added (check that
+`WEBKIT_DISABLE_COMPOSITING_MODE` appears in `daemon/src/main.rs`) and
+that the daemon binary was rebuilt and reinstalled, not just the config
+reloaded.
+
+If `pixman` plus both `WEBKIT_DISABLE_*` variables still doesn't help, or
+you'd rather not run a software renderer at all, try
 switching compositors entirely instead — set `[general] -> compositor =>
 labwc` (with `labwc` installed; see [Compositor](#compositor)). cage and
 labwc are two separate compositors built on the same wlroots libraries
