@@ -376,24 +376,34 @@ retrieve device information` instead of any cage-side `[render/egl.c:...]`
 lines** — that's not the same crash recurring, it's the *next* one: cage
 itself is fine now (the pixman renderer log line and successful DRM
 modesetting confirm that), but `hdm-greeter` is crashing instead, because
-it tries to open its own hardware-accelerated EGL/GL context (WebKitGTK's
-regular accelerated-compositing path — a different thing from the DMA-BUF
-renderer `WEBKIT_DISABLE_DMABUF_RENDERER` disables), and a `pixman`-backed
-cage advertises no GBM/DRM device for clients to use, so that EGL init
-gets handed an invalid fd and the greeter dies mid-setup — which cage
-then reports as the same assertion while tearing down that now-orphaned
-surface. Current versions of HDM already set
-`WEBKIT_DISABLE_COMPOSITING_MODE=1` unconditionally in the greeter's
-environment for exactly this case (forces WebKit fully onto software/Cairo
-rendering, no GL/EGL at all — see `spawn_greeter_command()` in
-`daemon/src/main.rs`), so if you're still seeing it, make sure you're
-actually running a build from after that was added (check that
-`WEBKIT_DISABLE_COMPOSITING_MODE` appears in `daemon/src/main.rs`) and
-that the daemon binary was rebuilt and reinstalled, not just the config
-reloaded.
+it tries to open its own hardware-accelerated EGL/GL context, and a
+`pixman`-backed cage advertises no GBM/DRM device for clients to use, so
+that EGL init gets handed an invalid fd and the greeter dies mid-setup —
+which cage then reports as the same assertion while tearing down that
+now-orphaned surface.
 
-If `pixman` plus both `WEBKIT_DISABLE_*` variables still doesn't help, or
-you'd rather not run a software renderer at all, try
+There are actually *two* independent places this EGL probe can come from
+in `hdm-greeter`, and current HDM disables both unconditionally in the
+greeter's environment (see `spawn_greeter_command()` in
+`daemon/src/main.rs`):
+- WebKit's own accelerated-compositing path — `WEBKIT_DISABLE_COMPOSITING_MODE=1`
+- GDK's, one layer further down — `hdm-greeter` is a GTK3 application
+  (webkit2gtk-4.1 requires GTK3, not GTK4), and GDK's Wayland backend
+  initializes its own EGL display independently of whatever WebKit does
+  with it, so `WEBKIT_DISABLE_COMPOSITING_MODE` alone doesn't reach it —
+  `GDK_GL=disable` (a separate, long-standing GTK3 env var) is needed too,
+  and is what actually stops the fd -1 probe from happening at all
+
+If you're still seeing this exact crash, make sure you're running a build
+from after **both** of those were added — check that `GDK_GL` (not just
+`WEBKIT_DISABLE_COMPOSITING_MODE`) appears in `daemon/src/main.rs` — and
+that the daemon binary was actually rebuilt and reinstalled, not just the
+config reloaded (none of this is configurable from `hdm.hk`; it's set in
+Rust code).
+
+If `pixman` plus all three of `WEBKIT_DISABLE_DMABUF_RENDERER`,
+`WEBKIT_DISABLE_COMPOSITING_MODE`, and `GDK_GL=disable` still doesn't
+help, or you'd rather not run a software renderer at all, try
 switching compositors entirely instead — set `[general] -> compositor =>
 labwc` (with `labwc` installed; see [Compositor](#compositor)). cage and
 labwc are two separate compositors built on the same wlroots libraries
