@@ -395,24 +395,31 @@ fn spawn_greeter_command(
     // `MESA-LOADER: failed to retrieve device information` instead of any
     // cage-side `[render/egl.c:...]` lines. That signature means it's now
     // hdm-greeter's *own* process trying to open a hardware-accelerated
-    // EGL/GL context (WebKitGTK's non-DMA-BUF accelerated compositing path,
-    // which WEBKIT_DISABLE_DMABUF_RENDERER does not disable — it only turns
-    // off one specific buffer-sharing method, not GL/EGL use in general):
-    // once the compositor's own renderer is `pixman` it advertises no
-    // GBM-backed DRM device over linux-dmabuf for clients to open, so the
-    // greeter's EGL init gets handed an invalid fd (-1), the greeter's
-    // WebKit process dies mid-setup, and cage hits the same assertion
-    // tearing down that now-orphaned, half-initialized client surface —
-    // a different failure with the same symptom as the one
-    // WEBKIT_DISABLE_DMABUF_RENDERER addresses, not a sign that fix didn't
-    // work. WEBKIT_DISABLE_COMPOSITING_MODE=1 forces WebKit fully off
-    // GL/EGL and onto plain CPU (Cairo) rendering instead, which avoids
-    // this regardless of what the compositor's own renderer is doing —
-    // unconditional here for the same reason as
-    // WEBKIT_DISABLE_DMABUF_RENDERER above: harmless when it isn't the
-    // culprit, and login-screen rendering doesn't need GPU acceleration
-    // enough to trade this kind of crash for it.
+    // EGL/GL context, and once the compositor's own renderer is `pixman` it
+    // advertises no GBM-backed DRM device over linux-dmabuf for clients to
+    // open, so that EGL init gets handed an invalid fd (-1), the greeter
+    // dies mid-setup, and cage hits the same assertion tearing down that
+    // now-orphaned, half-initialized client surface — a different failure
+    // with the same symptom as the one WEBKIT_DISABLE_DMABUF_RENDERER
+    // addresses, not a sign that fix didn't work.
+    //
+    // WEBKIT_DISABLE_COMPOSITING_MODE=1 forces *WebKit's own* accelerated
+    // compositing off, but doesn't reach this: the EGL probe that actually
+    // fails with fd -1 happens one layer further down, in GDK — the GTK3
+    // toolkit hdm-greeter (a GTK3 app; webkit2gtk-4.1 requires GTK3, not
+    // GTK4) is built on. GDK's Wayland backend initializes an EGL display
+    // as part of its own startup, independent of whatever WebKit decides to
+    // do with it, so this still needs disabling separately, one level
+    // lower: GDK_GL=disable (a long-standing GTK3 env var, distinct from
+    // WEBKIT_DISABLE_COMPOSITING_MODE and not superseded by it) tells GDK
+    // itself never to create a GL/EGL context at all, which is what
+    // actually prevents the fd -1 probe from happening in the first place.
+    // Kept both: WEBKIT_DISABLE_COMPOSITING_MODE for WebKit's own layer,
+    // GDK_GL=disable for GDK's — each addresses a different one of the two
+    // (so far) observed flavors of this crash, and neither substitutes for
+    // the other.
     cmd.env("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    cmd.env("GDK_GL", "disable");
 
     // `[general] -> compositor_renderer` in hdm.hk (see the field's doc
     // comment on `HdmConfig` in config.rs). Forces the compositor's
@@ -426,11 +433,11 @@ fn spawn_greeter_command(
     // leaves cage/wlroots to auto-detect as before. Only meaningful when
     // an actual compositor is hosting the greeter, hence gated on
     // `compositor != "none"` here rather than being set unconditionally
-    // like the two WEBKIT_DISABLE_* vars above. Pairs with
-    // WEBKIT_DISABLE_COMPOSITING_MODE above: setting this to a software
-    // renderer (`"pixman"`) without also forcing the greeter off GL/EGL
-    // just trades cage's crash for the greeter's, as the log that prompted
-    // this comment demonstrated.
+    // like the two WEBKIT_DISABLE_* vars and GDK_GL above. Pairs with
+    // those: setting this to a software renderer (`"pixman"`) without also
+    // forcing the greeter off GL/EGL at both the WebKit and GDK layers just
+    // trades cage's crash for the greeter's, as the logs that prompted
+    // these comments demonstrated in turn.
     if !(compositor.eq_ignore_ascii_case("none") || compositor.is_empty()) {
         if let Some(renderer) = compositor_renderer {
             if !renderer.is_empty() {
