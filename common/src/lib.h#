@@ -1,0 +1,7 @@
+mod shim
+mod jsonw
+mod hk
+
+pub fn version() -> string is
+    return "0.7.0"
+end
