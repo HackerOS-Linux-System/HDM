@@ -1,0 +1,97 @@
+use "bit -> hdm-common" from "common"
+use "std -> test" from "test"
+mod sysinfo
+mod gconfig
+mod client
+
+#[test]
+fn test_any_interface_up_ignores_loopback() is
+    assert_true(!sysinfo::any_interface_up(["lo"], ["up"]))
+    assert_true(sysinfo::any_interface_up(["lo", "eth0"], ["unknown", "up"]))
+    assert_true(!sysinfo::any_interface_up(["eth0", "wlan0"], ["down", "dormant"]))
+    assert_true(!sysinfo::any_interface_up([], []))
+end
+
+#[test]
+fn test_battery_parsing() is
+    let ok: string = sysinfo::parse_battery_info("87\n", "Charging\n")
+    assert_eq(jsonw::get_int(ok, "percentage", -1), 87)
+    assert_true(jsonw::get_bool(ok, "charging", false))
+    let dis: string = sysinfo::parse_battery_info("42", "Discharging")
+    assert_true(!jsonw::get_bool(dis, "charging", true))
+    let full: string = sysinfo::parse_battery_info("100", "full")
+    assert_true(jsonw::get_bool(full, "charging", false))
+    let nostat: string = sysinfo::parse_battery_info("55", "")
+    assert_true(!jsonw::get_bool(nostat, "charging", true))
+    assert_eq(sysinfo::parse_battery_info("abc", "Charging"), "")
+    assert_eq(sysinfo::parse_battery_info("", ""), "")
+    assert_eq(sysinfo::parse_battery_info("9999", ""), "")
+end
+
+#[test]
+fn test_amixer_volume_parsing() is
+    assert_eq(sysinfo::parse_amixer_volume("  Front Left: Playback 45 [72%] [on]"), 72)
+    assert_eq(sysinfo::parse_amixer_volume("Mono: Playback 0 [0%] [off]"), 0)
+    assert_eq(sysinfo::parse_amixer_volume("no brackets here"), -1)
+    assert_eq(sysinfo::parse_amixer_volume("[abc%]"), -1)
+    assert_eq(sysinfo::parse_amixer_volume("[50"), -1)
+end
+
+#[test]
+fn test_fprintd_list_parsing() is
+    assert_true(sysinfo::fprintd_list_has_fingers("found 1 devices\nFingerprints for user alice on Elan (press):\n - #0: right-index-finger\n"))
+    assert_true(!sysinfo::fprintd_list_has_fingers("User alice has no fingers enrolled for Elan."))
+    assert_true(!sysinfo::fprintd_list_has_fingers(""))
+end
+
+#[test]
+fn test_general_section_parsing() is
+    let g: gconfig::General = gconfig::read_general_text("[general]\n-> theme => midnight\n-> background => \"/w.png\"\n-> show_user_list => false\n")
+    assert_eq(g.theme, "midnight")
+    assert_eq(g.background, "/w.png")
+    assert_eq(g.show_user_list, "false")
+    assert_eq(g.clock_format, "")
+    assert_eq(gconfig::read_general_text("[broken\n").theme, "")
+end
+
+#[test]
+fn test_system_config_wins_per_field() is
+    let sys: gconfig::General = gconfig::General { background: "", theme: "midnight", clock_format: "", show_user_list: "" }
+    let usr: gconfig::General = gconfig::General { background: "/u.png", theme: "graphite", clock_format: "%H", show_user_list: "false" }
+    let m: gconfig::General = gconfig::merge_general(sys, usr)
+    assert_eq(m.theme, "midnight")
+    assert_eq(m.background, "/u.png")
+    assert_eq(m.clock_format, "%H")
+    assert_eq(m.show_user_list, "false")
+end
+
+#[test]
+fn test_user_default_config_is_valid_hk() is
+    let g: gconfig::General = gconfig::read_general_text(gconfig::user_default_config_content())
+    assert_eq(g.theme, gconfig::default_theme())
+    assert_eq(g.background, gconfig::default_wallpaper())
+    assert_eq(g.clock_format, gconfig::default_clock_format())
+end
+
+#[test]
+fn test_auth_result_mapping() is
+    let ok: string = client::auth_result(jsonw::obj([jsonw::f_str("type", "auth_success"), jsonw::f_str("username", "alice")]))
+    assert_true(jsonw::get_bool(ok, "success", false))
+    assert_eq(jsonw::get_str(ok, "username"), "alice")
+    let bad: string = client::auth_result(jsonw::obj([jsonw::f_str("type", "auth_failure"), jsonw::f_str("reason", "Incorrect password"), jsonw::f_int("attempts_left", 3)]))
+    assert_true(!jsonw::get_bool(bad, "success", true))
+    assert_eq(jsonw::get_str(bad, "error"), "Incorrect password")
+    assert_eq(jsonw::get_int(bad, "attempts_left", -1), 3)
+    let err: string = client::auth_result(jsonw::obj([jsonw::f_str("type", "error"), jsonw::f_str("message", "Not authenticated")]))
+    assert_eq(jsonw::get_str(err, "error"), "Not authenticated")
+end
+
+#[test]
+fn test_request_builders_escape_hostile_input() is
+    let r: string = client::req_authenticate("al\"ice", "pa\\ss\nword")
+    assert_eq(jsonw::get_str(r, "cmd"), "authenticate")
+    assert_eq(jsonw::get_str(r, "username"), "al\"ice")
+    assert_eq(jsonw::get_str(r, "password"), "pa\\ss\nword")
+    let p: string = client::req_pattern("u", [0, 1, 2, 4])
+    assert_eq(array_len(jsonw::get_int_array(p, "pattern")), 4)
+end
