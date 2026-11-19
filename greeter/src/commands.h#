@@ -1,0 +1,168 @@
+use "bit -> silver" from "silver"
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+use "std -> process" from "process"
+mod client
+mod gconfig
+mod sysinfo
+
+fn value(raw: string) -> string is
+    return jsonw::obj([jsonw::f_raw("value", raw)])
+end
+
+fn not_connected() -> string is
+    return ipc::error_json("daemon", "Not connected to daemon")
+end
+
+;; Typ odpowiedzi daemona; "" gdy brak odpowiedzi.
+fn reply_error(reply: string) -> string is
+    if reply == "" is return not_connected() end
+    if jsonw::get_str(reply, "type") == "error" is
+        return ipc::error_json("daemon", jsonw::get_str(reply, "message"))
+    end
+    return ipc::error_json("daemon", "Unexpected response from daemon")
+end
+
+pub fn connect_daemon(args: string) -> string is
+    let welcome: string = client::connect()
+    if welcome == "" is
+        return ipc::error_json("daemon", "Cannot connect to HDM daemon: " + client::socket_path())
+    end
+    return jsonw::obj([
+        jsonw::f_str("version", jsonw::get_str(welcome, "version")),
+        jsonw::f_str("hostname", jsonw::get_str(welcome, "hostname")),
+        jsonw::f_int("uptime", jsonw::get_int(welcome, "uptime", 0)),
+        jsonw::f_str("os_name", jsonw::get_str(welcome, "os_name")),
+        jsonw::f_str("os_version", jsonw::get_str(welcome, "os_version")),
+        jsonw::f_bool("connected", true),
+        jsonw::f_str("default_session", jsonw::get_str(welcome, "default_session"))
+    ])
+end
+
+;; Lista sesji / użytkowników: odpowiedź daemona przechodzi bez zmian ({"type":"sessions","sessions":[...]}).
+pub fn get_sessions(args: string) -> string is
+    let r: string = client::call_any(client::req("get_sessions"))
+    if jsonw::get_str(r, "type") != "sessions" is return reply_error(r) end
+    return r
+end
+
+pub fn get_users(args: string) -> string is
+    let r: string = client::call_any(client::req("get_users"))
+    if jsonw::get_str(r, "type") != "users" is return reply_error(r) end
+    return r
+end
+
+pub fn authenticate(args: string) -> string is
+    let r: string = client::call(client::req_authenticate(jsonw::get_str(args, "username"), jsonw::get_str(args, "password")))
+    if r == "" is return not_connected() end
+    return client::auth_result(r)
+end
+
+pub fn authenticate_pattern(args: string) -> string is
+    let r: string = client::call(client::req_pattern(jsonw::get_str(args, "username"), jsonw::get_int_array(args, "pattern")))
+    if r == "" is return not_connected() end
+    return client::auth_result(r)
+end
+
+;; Skan odcisku trwa do ~30 s — nie blokujemy pętli UI. Handler wysyła żądanie i wraca od razu
+;; ({"pending": true}); wynik przychodzi jako zdarzenie "hdm://fingerprint" z on_tick (main.h#).
+pub fn authenticate_fingerprint(args: string) -> string is
+    if client::conn() <= 0 is return not_connected() end
+    if client::fp_pending() is return ipc::error_json("busy", "Fingerprint scan already in progress") end
+    let ok: int = shim::hdm_send(client::conn(), client::req_fingerprint(jsonw::get_str(args, "username")) + "\n")
+    if ok != 1 is return client::auth_unavailable("Lost connection to the HDM daemon") end
+    client::set_fp_pending(true)
+    return jsonw::obj([jsonw::f_bool("pending", true)])
+end
+
+pub fn has_fingerprint(args: string) -> string is
+    let u: string = jsonw::get_str(args, "username")
+    if u == "" || string_contains(u, "/") is return value("false") end
+    let out: string = process::run_args("fprintd-list", [u])
+    return value(jsonw::bool_text(sysinfo::fprintd_list_has_fingers(out)))
+end
+
+pub fn pattern_is_configured(args: string) -> string is
+    let home: string = jsonw::get_str(args, "home")
+    if home == "" is return value("false") end
+    return value(jsonw::bool_text(fs::exists(home + "/.config/Blue-Environment/pattern.hash")))
+end
+
+pub fn start_session(args: string) -> string is
+    let r: string = client::call(client::req_start_session(jsonw::get_str(args, "username"), jsonw::get_str(args, "session")))
+    let t: string = jsonw::get_str(r, "type")
+    if t == "session_started" is return value(jsonw::q(jsonw::get_str(r, "session_id"))) end
+    if t == "session_error" is return ipc::error_json("session", jsonw::get_str(r, "reason")) end
+    return reply_error(r)
+end
+
+pub fn power_action(args: string) -> string is
+    let r: string = client::call_any(client::req_power(jsonw::get_str(args, "action")))
+    if jsonw::get_str(r, "type") != "power_result" is return reply_error(r) end
+    return value(jsonw::bool_text(jsonw::get_bool(r, "success", false)))
+end
+
+;; Ścieżka tapety (frontend wstawia ją do <img src>) albo null.
+pub fn get_wallpaper(args: string) -> string is
+    let g: gconfig::General = gconfig::resolve_general_section(gconfig::config_path())
+    let p: string = gconfig::find_wallpaper(g)
+    if p == "" is return value("null") end
+    return value(jsonw::q(p))
+end
+
+pub fn get_greeter_config(args: string) -> string is
+    let g: gconfig::General = gconfig::resolve_general_section(gconfig::config_path())
+    return jsonw::obj([
+        jsonw::f_str("theme", if g.theme != "" then g.theme else gconfig::default_theme()),
+        jsonw::f_str("clock_format", if g.clock_format != "" then g.clock_format else gconfig::default_clock_format()),
+        jsonw::f_bool("show_user_list", g.show_user_list != "false"),
+        jsonw::f_opt("background", g.background)
+    ])
+end
+
+pub fn get_hostname(args: string) -> string is
+    let mut h: string = "localhost"
+    if fs::exists("/etc/hostname") is
+        let t: string = string_trim(fs::read("/etc/hostname"))
+        if t != "" is h = t end
+    end
+    return value(jsonw::q(h))
+end
+
+pub fn get_current_time(args: string) -> string is
+    return value(jsonw::q(shim::hdm_strftime("%H:%M")))
+end
+
+pub fn get_current_date(args: string) -> string is
+    return value(jsonw::q(shim::hdm_strftime("%A, %B %-d, %Y")))
+end
+
+pub fn check_network(args: string) -> string is
+    return value(jsonw::bool_text(sysinfo::check_network()))
+end
+
+pub fn get_battery_info(args: string) -> string is
+    let b: string = sysinfo::get_battery_info()
+    if b == "" is return value("null") end
+    return value(b)
+end
+
+pub fn get_volume_level(args: string) -> string is
+    let v: int = sysinfo::get_volume_level()
+    if v < 0 is return value("null") end
+    return value(to_string(v))
+end
+
+;; setxkbmap działa tylko pod X11/Xwayland; błąd nigdy nie blokuje logowania.
+pub fn set_keyboard_layout_hdm(args: string) -> string is
+    let layout: string = jsonw::get_str(args, "layout")
+    if layout != "" && !string_starts_with(layout, "-") is process::run_args("setxkbmap", [layout]) end
+    return value("null")
+end
+
+;; Silver ładuje <img src> prosto ze ścieżki, więc zamiast data-URL zwracamy ścieżkę (jeśli plik istnieje i jest czytelny).
+pub fn read_user_avatar(args: string) -> string is
+    let p: string = jsonw::get_str(args, "path")
+    if p != "" && fs::is_file(p) && shim::hdm_readable(p) == 1 is return value(jsonw::q(p)) end
+    return value("null")
+end
