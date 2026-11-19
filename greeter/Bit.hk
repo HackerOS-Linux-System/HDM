@@ -1,0 +1,50 @@
+[package]
+-> name        => hdm-greeter
+-> version     => 0.7.0
+-> description => HDM — ekran logowania (Silver: frontend Solid.js + TypeScript, backend H#)
+-> authors     => ["HackerOS Team <hackeros068@gmail.com>"]
+-> license     => GPL-3.0
+-> lang        => h#
+
+[edition]
+-> edition => 2026
+
+[layout]
+-> src => src
+
+[build]
+-> link => static
+
+[dependencies]
+-> silver => newest
+-> hdm-common
+--> path => ../common
+
+[default-build]
+-> profile => release
+-> target  => h#
+-> emit    => bin
+-> run     => false
+
+[hooks]
+-> pre-build => cd frontend && npm install --no-audit --no-fund && npm run build && cd .. && node ../tools/embed.mjs --quiet
+
+[commands]
+-> frontend
+--> run => cd frontend && npm install --no-audit --no-fund && npm run build
+--> description => Zbuduj frontend (Solid.js + TS -> frontend/dist)
+-> watch
+--> run => cd frontend && npm run watch
+--> description => Buduj frontend przy każdej zmianie
+-> embed
+--> run => node ../tools/embed.mjs
+--> description => Wbuduj frontend/dist w binarkę (src/assets_gen.h#)
+-> test
+--> run => bit test && cd frontend && npm test
+--> description => Testy H# (parsery systemowe, config) i frontendu (vitest)
+-> check
+--> run => h# check src/main.h# src/tests.h#
+--> description => Składnia i typy greetera
+-> dev
+--> run => HDM_SOCKET=/run/hdm/hdm.sock bit run
+--> description => Uruchom greetera lokalnie (wymaga działającego daemona albo HDM_SOCKET)
