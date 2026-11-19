@@ -1,0 +1,34 @@
+[package]
+-> name        => hdm-daemon
+-> version     => 0.7.0
+-> description => HDM — demon HackerOS Display Manager (H#): uwierzytelnianie, sesje, VT, IPC po gnieździe Unix
+-> authors     => ["HackerOS Team <hackeros068@gmail.com>"]
+-> license     => GPL-3.0
+-> lang        => h#
+
+[edition]
+-> edition => 2026
+
+[layout]
+-> src => src
+
+[build]
+-> link => static
+
+[dependencies]
+-> hdm-common
+--> path => ../common
+
+[default-build]
+-> profile => release
+-> target  => h#
+-> emit    => bin
+-> run     => false
+
+[commands]
+-> test
+--> run => bit test
+--> description => Testy jednostkowe daemona (limiter, hk, config, shadow, sesje, JSON)
+-> check
+--> run => h# check src/main.h# src/tests.h#
+--> description => Składnia i typy całego daemona
