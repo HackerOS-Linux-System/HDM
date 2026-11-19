@@ -1,0 +1,326 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+mod config
+mod state
+mod users
+mod session
+mod pam_auth
+mod greeter
+mod logging
+
+pub fn version() -> string is
+    return "0.7.0"
+end
+
+fn send(fd: int, json: string) is
+    shim::hdm_send(fd, json + "\n")
+end
+
+;; ── Odpowiedzi ──────────────────────────────────────────────────────────────
+
+pub fn r_auth_success(username: string) -> string is
+    return jsonw::obj([jsonw::f_str("type", "auth_success"), jsonw::f_str("username", username)])
+end
+
+pub fn r_auth_failure(reason: string, attempts_left: int) -> string is
+    return jsonw::obj([jsonw::f_str("type", "auth_failure"), jsonw::f_str("reason", reason), jsonw::f_int("attempts_left", attempts_left)])
+end
+
+pub fn r_error(message: string) -> string is
+    return jsonw::obj([jsonw::f_str("type", "error"), jsonw::f_str("message", message)])
+end
+
+pub fn r_session_started(session_id: string) -> string is
+    return jsonw::obj([jsonw::f_str("type", "session_started"), jsonw::f_str("session_id", session_id)])
+end
+
+pub fn r_session_error(reason: string) -> string is
+    return jsonw::obj([jsonw::f_str("type", "session_error"), jsonw::f_str("reason", reason)])
+end
+
+pub fn r_power(success: bool, message: string) -> string is
+    return jsonw::obj([jsonw::f_str("type", "power_result"), jsonw::f_bool("success", success), jsonw::f_str("message", message)])
+end
+
+pub fn r_bye() -> string is
+    return jsonw::obj([jsonw::f_str("type", "bye")])
+end
+
+;; Odpowiedź na nieudaną próbę z uwzględnieniem świeżo założonej blokady.
+pub fn lockout_aware_failure(base_reason: string, attempts_left: int, locked_for: int) -> string is
+    if locked_for > 0 is
+        return r_auth_failure("Too many failed attempts - locked for " + to_string(locked_for) + "s", 0)
+    end
+    let mut left: int = attempts_left
+    if left > 255 is left = 255 end
+    return r_auth_failure(base_reason, left)
+end
+
+fn read_os_release() -> string is
+    let mut content: string = ""
+    if fs::exists("/etc/os-release") is
+        content = fs::read("/etc/os-release")
+    elsif fs::exists("/usr/lib/os-release") is
+        content = fs::read("/usr/lib/os-release")
+    end
+    let mut name: string = "Linux"
+    let mut ver: string = ""
+    let lines: [string] = string_split(content, "\n")
+    let mut i: int = 0
+    while i < array_len(lines) is
+        let line: string = lines[i]
+        i += 1
+        let eq: int = string_find(line, "=")
+        if eq < 0 is continue end
+        let k: string = string_slice(line, 0, eq)
+        let mut v: string = string_trim(string_slice(line, eq + 1, string_len(line)))
+        if string_starts_with(v, "\"") && string_ends_with(v, "\"") && string_len(v) >= 2 is
+            v = string_slice(v, 1, string_len(v) - 1)
+        end
+        if k == "PRETTY_NAME" is name = v end
+        if k == "VERSION_ID" is ver = v end
+    end
+    return name + "\n" + ver
+end
+
+pub fn info_json(st: state::DaemonState) -> string is
+    let mut hostname: string = "localhost"
+    if fs::exists("/etc/hostname") is
+        let h: string = string_trim(fs::read("/etc/hostname"))
+        if h != "" is hostname = h end
+    end
+    let mut uptime: int = 0
+    if fs::exists("/proc/uptime") is
+        let first: [string] = string_split(string_trim(fs::read("/proc/uptime")), " ")
+        let secs: [string] = string_split(first[0], ".")
+        uptime = str_to_int(secs[0])
+    end
+    let os: [string] = string_split(read_os_release(), "\n")
+    return jsonw::obj([
+        jsonw::f_str("type", "info"),
+        jsonw::f_str("version", version()),
+        jsonw::f_str("hostname", hostname),
+        jsonw::f_int("uptime", uptime),
+        jsonw::f_str("os_name", os[0]),
+        jsonw::f_str("os_version", os[1]),
+        jsonw::f_str("default_session", session::get_default_session(st.cfg))
+    ])
+end
+
+pub fn sessions_json(st: state::DaemonState) -> string is
+    let list: [session::SessionInfo] = session::list_sessions(st.cfg)
+    let mut items: [string] = []
+    let mut i: int = 0
+    while i < array_len(list) is
+        items = array_push(items, session::session_json(list[i]))
+        i += 1
+    end
+    return jsonw::obj([jsonw::f_str("type", "sessions"), jsonw::f_raw("sessions", jsonw::arr(items))])
+end
+
+pub fn users_json(st: state::DaemonState) -> string is
+    let list: [users::UserInfo] = users::list_users(st.cfg)
+    let mut items: [string] = []
+    let mut i: int = 0
+    while i < array_len(list) is
+        let u: users::UserInfo = list[i]
+        items = array_push(items, jsonw::obj([
+            jsonw::f_str("username", u.username),
+            jsonw::f_str("realname", u.realname),
+            jsonw::f_int("uid", u.uid),
+            jsonw::f_str("home", u.home),
+            jsonw::f_str("shell", u.shell),
+            jsonw::f_opt("icon_path", u.icon_path),
+            jsonw::f_opt("last_session", u.last_session)
+        ]))
+        i += 1
+    end
+    return jsonw::obj([jsonw::f_str("type", "users"), jsonw::f_raw("users", jsonw::arr(items))])
+end
+
+;; ── Wspólne ścieżki uwierzytelniania ───────────────────────────────────────
+
+;; Jedyny punkt kontroli blokady dla KAŻDEJ metody (hasło, wzorzec, odcisk).
+;; Zwraca "" gdy dozwolone, inaczej gotową odpowiedź auth_failure.
+fn rate_limit_response(st: state::DaemonState, username: string) -> string is
+    let c: pam_auth::LimitCheck = pam_auth::check(st.limiter, username, shim::hdm_now_ms())
+    if !c.locked is return "" end
+    logging::warn("Rejected auth attempt for '" + username + "' - locked out for " + to_string(c.seconds_left) + "s more")
+    return r_auth_failure("Account locked - try again in " + to_string(c.seconds_left) + "s", 0)
+end
+
+fn auth_succeeded(st: state::DaemonState, fd: int, username: string) -> state::DaemonState is
+    let mut n: state::DaemonState = st
+    n.limiter = pam_auth::record_success(n.limiter, username)
+    n = state::set_client_user(n, fd, username)
+    send(fd, r_auth_success(username))
+    return n
+end
+
+fn auth_failed(st: state::DaemonState, fd: int, username: string, reason: string) -> state::DaemonState is
+    let f: pam_auth::FailureResult = pam_auth::record_failure(st.limiter, username, shim::hdm_now_ms())
+    let mut n: state::DaemonState = st
+    n.limiter = f.limiter
+    send(fd, lockout_aware_failure(reason, f.attempts_left, f.locked_for))
+    return n
+end
+
+;; ── Obsługa jednej linii żądania ────────────────────────────────────────────
+
+fn start_session_for(st: state::DaemonState, fd: int, username: string, session_id: string) -> state::DaemonState is
+    let r: session::LaunchResult = session::launch(st, username, session_id)
+    if r.error != "" is
+        send(fd, r_session_error(r.error))
+    else is
+        send(fd, r_session_started(r.session_id))
+    end
+    return r.st
+end
+
+pub fn handle_line(st: state::DaemonState, fd: int, raw: string) -> state::DaemonState is
+    let line: string = string_trim(raw)
+    if line == "" is return st end
+    let cmd: string = jsonw::get_str(line, "cmd")
+    if !string_starts_with(line, jsonw::lb()) || cmd == "" is
+        send(fd, r_error("Parse error: expected a JSON object with a \"cmd\" field"))
+        return st
+    end
+
+    if cmd == "get_info" is
+        send(fd, info_json(st))
+        return st
+    end
+    if cmd == "get_sessions" is
+        send(fd, sessions_json(st))
+        return st
+    end
+    if cmd == "get_users" is
+        send(fd, users_json(st))
+        return st
+    end
+
+    if cmd == "authenticate" is
+        let username: string = jsonw::get_str(line, "username")
+        let password: string = jsonw::get_str(line, "password")
+        let limited: string = rate_limit_response(st, username)
+        if limited != "" is
+            send(fd, limited)
+            return st
+        end
+        if username == "root" && !st.cfg.allow_root is
+            return auth_failed(st, fd, username, "Root login not permitted")
+        end
+        logging::info("Auth attempt for: " + username)
+        let err: string = pam_auth::authenticate(username, password)
+        if err == "" is
+            logging::info("Auth success: " + username)
+            return auth_succeeded(st, fd, username)
+        end
+        logging::warn("Auth failure for " + username + ": " + err)
+        return auth_failed(st, fd, username, err)
+    end
+
+    if cmd == "pattern_auth" is
+        let username: string = jsonw::get_str(line, "username")
+        let pattern: [int] = jsonw::get_int_array(line, "pattern")
+        let limited: string = rate_limit_response(st, username)
+        if limited != "" is
+            send(fd, limited)
+            return st
+        end
+        let u: users::PwEntry = users::lookup(username)
+        let mut err: string = ""
+        if u.uid < 0 is
+            err = "User '" + username + "' not found"
+        else is
+            err = pam_auth::authenticate_pattern(username, u.home, pattern)
+        end
+        if err == "" is
+            logging::info("Pattern auth success: " + username)
+            return auth_succeeded(st, fd, username)
+        end
+        logging::warn("Pattern auth failure for " + username + ": " + err)
+        return auth_failed(st, fd, username, err)
+    end
+
+    if cmd == "fingerprint_auth" is
+        let username: string = jsonw::get_str(line, "username")
+        let limited: string = rate_limit_response(st, username)
+        if limited != "" is
+            send(fd, limited)
+            return st
+        end
+        if !pam_auth::valid_username(username) is
+            return auth_failed(st, fd, username, "Invalid user name")
+        end
+        logging::info("Fingerprint auth requested for " + username)
+        ;; fprintd-verify skanuje do kilkudziesięciu sekund — jako proces potomny, żeby nie blokować pętli.
+        ;; -u wprost: fprintd sprawdza odcisk dla WSKAZANEGO użytkownika Linuksa.
+        let pid: int = shim::hdm_spawn("fprintd-verify\n-u\n" + username + "\n-f\nany", "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "/", "", 0, 0)
+        if pid < 0 is
+            return auth_failed(st, fd, username, "Fingerprint not recognised, sensor unavailable, or fprintd not enrolled for this user")
+        end
+        let mut n: state::DaemonState = st
+        n.fp_jobs = array_push(n.fp_jobs, state::FpJob { fd: fd, pid: pid, user: username, deadline: shim::hdm_now_ms() + 30000 })
+        return n
+    end
+
+    if cmd == "start_session" is
+        let username: string = jsonw::get_str(line, "username")
+        let session_id: string = jsonw::get_str(line, "session")
+        if username == "" || state::client_user(st, fd) != username is
+            send(fd, r_error("Not authenticated"))
+            return st
+        end
+        logging::info("Starting session '" + session_id + "' for '" + username + "'")
+        return start_session_for(st, fd, username, session_id)
+    end
+
+    if cmd == "guest_login" is
+        if !st.cfg.allow_guest is
+            send(fd, r_error("Guest login is disabled in hdm.hk (allow_guest = false)"))
+            return st
+        end
+        let session_id: string = jsonw::get_str(line, "session")
+        logging::info("Guest login requested for session '" + session_id + "'")
+        users::ensure_guest_account()
+        let n: state::DaemonState = state::set_client_user(st, fd, "guest")
+        return start_session_for(n, fd, "guest", session_id)
+    end
+
+    if cmd == "power_action" is
+        let action: string = jsonw::get_str(line, "action")
+        let mut pcmd: string = ""
+        if action == "shutdown" is pcmd = st.cfg.power_shutdown end
+        if action == "reboot" is pcmd = st.cfg.power_reboot end
+        if action == "suspend" is pcmd = st.cfg.power_suspend end
+        if action == "hibernate" is pcmd = st.cfg.power_hibernate end
+        if pcmd == "" is
+            send(fd, r_power(false, "Unknown power action"))
+            return st
+        end
+        send(fd, r_power(true, "Executing: " + pcmd))
+        shim::hdm_sleep_ms(200)
+        shim::hdm_spawn_detached(pcmd)
+        return st
+    end
+
+    if cmd == "cancel" is
+        send(fd, r_bye())
+        shim::hdm_close(fd)
+        let mut n: state::DaemonState = state::remove_client(st, fd)
+        return n
+    end
+
+    send(fd, r_error("Parse error: unknown variant `" + cmd + "`"))
+    return st
+end
+
+;; Wołane z pętli, gdy proces fprintd-verify się zakończył lub minął termin.
+pub fn finish_fingerprint(st: state::DaemonState, job: state::FpJob, exit_code: int) -> state::DaemonState is
+    if exit_code == 0 is
+        logging::info("Fingerprint auth success: " + job.user)
+        return auth_succeeded(st, job.fd, job.user)
+    end
+    return auth_failed(st, job.fd, job.user, "Fingerprint not recognised, sensor unavailable, or fprintd not enrolled for this user")
+end
