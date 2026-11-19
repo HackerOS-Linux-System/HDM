@@ -1,0 +1,30 @@
+[package]
+-> name        => hdm-common
+-> version     => 0.7.0
+-> description => HDM: wspólna biblioteka daemona i greetera (shim C, JSON, parser .hk)
+-> authors     => ["HackerOS Team <hackeros068@gmail.com>"]
+-> license     => GPL-3.0
+-> lang        => h#
+
+[edition]
+-> edition => 2026
+
+[layout]
+-> src => src
+
+[build]
+-> link => static
+-> native          => sh native/build.sh
+-> native-lib-path => native/build/bit
+-> native-skip-if  => native/build/bit/libhdmshim.a
+
+[lib]
+-> output => hlib
+
+[commands]
+-> test
+--> run => sh native/tests/run.sh
+--> description => Test warstwy natywnej (JSON, SHA-256, crypt, gniazda, procesy)
+-> native
+--> run => sh native/build.sh
+--> description => Zbuduj statyczne libhdmshim.a
