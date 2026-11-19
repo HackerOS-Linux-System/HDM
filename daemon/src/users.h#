@@ -1,0 +1,207 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+use "std -> process" from "process"
+mod config
+mod logging
+
+pub struct PwEntry is
+    pub name:  string
+    pub uid:   int
+    pub gid:   int
+    pub gecos: string
+    pub home:  string
+    pub shell: string
+end
+
+;; uid == -1 => nie znaleziono
+pub fn no_user() -> PwEntry is
+    return PwEntry { name: "", uid: -1, gid: -1, gecos: "", home: "", shell: "" }
+end
+
+fn all_digits(s: string) -> bool is
+    if s == "" is return false end
+    let digits: string = "0123456789"
+    let mut i: int = 0
+    while i < string_len(s) is
+        if !string_contains(digits, string_slice(s, i, i + 1)) is return false end
+        i += 1
+    end
+    return true
+end
+
+;; Jedna linia /etc/passwd; uid == -1 gdy linia jest niepoprawna.
+pub fn parse_passwd_line(line: string) -> PwEntry is
+    let p: [string] = string_split(line, ":")
+    if array_len(p) < 7 is return no_user() end
+    let uid_s: string = string_trim(p[2])
+    let gid_s: string = string_trim(p[3])
+    if !all_digits(uid_s) || !all_digits(gid_s) is return no_user() end
+    return PwEntry { name: p[0], uid: str_to_int(uid_s), gid: str_to_int(gid_s), gecos: p[4], home: p[5], shell: string_trim(p[6]) }
+end
+
+pub fn read_passwd() -> [PwEntry] is
+    let mut out: [PwEntry] = []
+    let lines: [string] = string_split(fs::read("/etc/passwd"), "\n")
+    let mut i: int = 0
+    while i < array_len(lines) is
+        let e: PwEntry = parse_passwd_line(lines[i])
+        if e.uid >= 0 is out = array_push(out, e) end
+        i += 1
+    end
+    return out
+end
+
+pub fn lookup(username: string) -> PwEntry is
+    let all: [PwEntry] = read_passwd()
+    let mut i: int = 0
+    while i < array_len(all) is
+        if all[i].name == username is return all[i] end
+        i += 1
+    end
+    return no_user()
+end
+
+;; ── Tryb live (Blue Installer) ──────────────────────────────────────────────
+;; Jeśli w katalogu domowym DOWOLNEGO użytkownika jest plik-znacznik (domyślnie
+;; .config/Blue-Environment/.live), HDM loguje go bez hasła. Nie podlega minimum_uid/maximum_uid;
+;; root i konta z shellem nologin/false są pomijane (chyba że allow_root).
+
+;; "~/x" i "/x" są traktowane jak "x" — zawsze względem katalogu domowego TEGO użytkownika.
+pub fn live_marker_for_home(home: string, marker_rel_path: string) -> string is
+    let mut rel: string = marker_rel_path
+    if string_starts_with(rel, "~/") is rel = string_slice(rel, 2, string_len(rel)) end
+    if string_starts_with(rel, "/") is rel = string_slice(rel, 1, string_len(rel)) end
+    let mut h: string = home
+    while string_ends_with(h, "/") is
+        h = string_slice(h, 0, string_len(h) - 1)
+    end
+    return h + "/" + rel
+end
+
+pub fn find_live_user(cfg: config::HdmConfig) -> string is
+    if !cfg.live_autologin is return "" end
+    let all: [PwEntry] = read_passwd()
+    let mut i: int = 0
+    while i < array_len(all) is
+        let e: PwEntry = all[i]
+        i += 1
+        if e.uid == 0 && !cfg.allow_root is continue end
+        if string_ends_with(e.shell, "nologin") || string_ends_with(e.shell, "false") is continue end
+        let marker: string = live_marker_for_home(e.home, cfg.live_marker_path)
+        if fs::exists(marker) is
+            logging::info("Live-mode marker found for user '" + e.name + "' at " + marker + " - auto-login (no password, no [autologin] section required)")
+            return e.name
+        end
+    end
+    return ""
+end
+
+;; ── Lista użytkowników dla greetera ────────────────────────────────────────
+
+pub struct UserInfo is
+    pub username:     string
+    pub realname:     string
+    pub uid:          int
+    pub home:         string
+    pub shell:        string
+    pub icon_path:    string
+    pub last_session: string
+end
+
+fn find_user_icon(username: string, home: string) -> string is
+    let candidates: [string] = [
+        home + "/.face",
+        home + "/.face.icon",
+        home + "/.config/hdm/avatar.png",
+        "/var/lib/AccountsService/icons/" + username,
+        "/usr/share/pixmaps/faces/" + username + ".png"
+    ]
+    let mut i: int = 0
+    while i < array_len(candidates) is
+        if fs::is_file(candidates[i]) is return candidates[i] end
+        i += 1
+    end
+    return ""
+end
+
+fn safe_name(u: string) -> bool is
+    if u == "" || string_contains(u, "/") || string_contains(u, "..") is return false end
+    return true
+end
+
+pub fn read_last_session(username: string) -> string is
+    if !safe_name(username) is return "" end
+    let path: string = "/var/lib/hdm/users/" + username + "/last_session"
+    if !fs::exists(path) is return "" end
+    return string_trim(fs::read(path))
+end
+
+pub fn save_last_session(username: string, session: string) is
+    if !safe_name(username) is return end
+    let dir: string = "/var/lib/hdm/users/" + username
+    fs::mkdir(dir)
+    fs::write(dir + "/last_session", session)
+end
+
+pub fn list_users(cfg: config::HdmConfig) -> [UserInfo] is
+    let all: [PwEntry] = read_passwd()
+    let mut sorted: [UserInfo] = []
+    let mut i: int = 0
+    while i < array_len(all) is
+        let e: PwEntry = all[i]
+        i += 1
+        if e.uid < cfg.minimum_uid || e.uid > cfg.maximum_uid is continue end
+        if string_ends_with(e.shell, "nologin") || string_ends_with(e.shell, "false") is continue end
+        let first: [string] = string_split(e.gecos, ",")
+        let mut realname: string = e.name
+        if array_len(first) > 0 && first[0] != "" is realname = first[0] end
+        let u: UserInfo = UserInfo {
+            username: e.name, realname: realname, uid: e.uid, home: e.home, shell: e.shell,
+            icon_path: find_user_icon(e.name, e.home), last_session: read_last_session(e.name)
+        }
+        ;; wstawianie z zachowaniem sortowania po username
+        let mut placed: bool = false
+        let mut next: [UserInfo] = []
+        let mut j: int = 0
+        while j < array_len(sorted) is
+            if !placed && u.username < sorted[j].username is
+                next = array_push(next, u)
+                placed = true
+            end
+            next = array_push(next, sorted[j])
+            j += 1
+        end
+        if !placed is next = array_push(next, u) end
+        sorted = next
+    end
+    return sorted
+end
+
+;; ── Konto gościa ───────────────────────────────────────────────────────────
+
+pub fn guest_home() -> string is
+    return "/tmp/hdm-guest-home"
+end
+
+pub fn ensure_guest_account() is
+    if lookup("guest").uid >= 0 is return end
+    logging::info("Creating temporary guest account")
+    let home: string = guest_home()
+    fs::mkdir(home)
+    process::run_args("useradd", ["--no-create-home", "--home-dir", home, "--shell", "/bin/bash", "--comment", "HDM Guest", "--no-user-group", "guest"])
+    process::run_args("passwd", ["-d", "guest"])
+    fs::mkdir(home + "/.config")
+    fs::write(home + "/.profile", "export HOME=/tmp/hdm-guest-home\n")
+    let g: PwEntry = lookup("guest")
+    if g.uid >= 0 is
+        shim::hdm_chown(home, g.uid, g.gid)
+        shim::hdm_chown(home + "/.config", g.uid, g.gid)
+        shim::hdm_chown(home + "/.profile", g.uid, g.gid)
+    end
+end
+
+pub fn cleanup_guest_account() is
+    logging::info("Cleaning up guest account")
+    process::run_args("userdel", ["guest"])
+    fs::rmdir_all(guest_home())
+end
