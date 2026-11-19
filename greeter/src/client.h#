@@ -1,0 +1,146 @@
+use "bit -> hdm-common" from "common"
+use "std -> sync" from "sync"
+
+pub fn socket_path() -> string is
+    let p: string = env_get("HDM_SOCKET")
+    if p == "" is return "/run/hdm/hdm.sock" end
+    return p
+end
+
+pub fn init() is
+    sync::atomic_new("hdm_fd", 0)
+    sync::atomic_new("hdm_fp", 0)
+end
+
+pub fn conn() -> int is
+    return sync::atomic_load("hdm_fd")
+end
+
+pub fn set_conn(fd: int) is
+    sync::atomic_store("hdm_fd", fd)
+end
+
+pub fn fp_pending() -> bool is
+    return sync::atomic_load("hdm_fp") == 1
+end
+
+pub fn set_fp_pending(on: bool) is
+    if on is
+        sync::atomic_store("hdm_fp", 1)
+    else is
+        sync::atomic_store("hdm_fp", 0)
+    end
+end
+
+;; Limit czekania na odpowiedź (ms). Logowanie hasłem (yescrypt) trwa <1 s; zapas na wolne maszyny.
+pub fn reply_timeout_ms() -> int is
+    return 15000
+end
+
+;; Łączy się z daemonem; zwraca powitalną odpowiedź Info (JSON) albo "" przy błędzie.
+pub fn connect() -> string is
+    let old: int = conn()
+    if old > 0 is
+        shim::hdm_close(old)
+        set_conn(0)
+    end
+    set_fp_pending(false)
+    let fd: int = shim::hdm_connect_unix(socket_path())
+    if fd < 0 is return "" end
+    let welcome: string = shim::hdm_read_line(fd, 5000)
+    if welcome == "" is
+        shim::hdm_close(fd)
+        return ""
+    end
+    set_conn(fd)
+    return welcome
+end
+
+;; Wysyła żądanie przez połączenie `fd` i czeka na jedną linię odpowiedzi; "" = błąd/timeout/rozłączenie.
+pub fn roundtrip(fd: int, request: string) -> string is
+    if fd <= 0 is return "" end
+    if shim::hdm_send(fd, request + "\n") != 1 is return "" end
+    return shim::hdm_read_line(fd, reply_timeout_ms())
+end
+
+;; Główne połączenie (zachowuje stan uwierzytelnienia). Rozłączenie zeruje deskryptor.
+pub fn call(request: string) -> string is
+    let fd: int = conn()
+    let reply: string = roundtrip(fd, request)
+    if reply == "" && fd > 0 && shim::hdm_io_status() == 2 is
+        shim::hdm_close(fd)
+        set_conn(0)
+    end
+    return reply
+end
+
+;; Zapytania bezstanowe (np. zasilanie) przez krótkie, osobne połączenie — działają także podczas skanowania
+;; odcisku palca, gdy główne połączenie czeka na odpowiedź.
+pub fn call_aux(request: string) -> string is
+    let fd: int = shim::hdm_connect_unix(socket_path())
+    if fd < 0 is return "" end
+    let hello: string = shim::hdm_read_line(fd, 3000)
+    let mut reply: string = ""
+    if hello != "" is reply = roundtrip(fd, request) end
+    shim::hdm_close(fd)
+    return reply
+end
+
+pub fn call_any(request: string) -> string is
+    if fp_pending() is return call_aux(request) end
+    let r: string = call(request)
+    if r == "" is return call_aux(request) end
+    return r
+end
+
+;; ── Budowa żądań ────────────────────────────────────────────────────────────
+
+pub fn req(cmd: string) -> string is
+    return jsonw::obj([jsonw::f_str("cmd", cmd)])
+end
+
+pub fn req_authenticate(username: string, password: string) -> string is
+    return jsonw::obj([jsonw::f_str("cmd", "authenticate"), jsonw::f_str("username", username), jsonw::f_str("password", password)])
+end
+
+pub fn req_pattern(username: string, pattern: [int]) -> string is
+    let mut items: [string] = []
+    let mut i: int = 0
+    while i < array_len(pattern) is
+        items = array_push(items, to_string(pattern[i]))
+        i += 1
+    end
+    return jsonw::obj([jsonw::f_str("cmd", "pattern_auth"), jsonw::f_str("username", username), jsonw::f_raw("pattern", jsonw::arr(items))])
+end
+
+pub fn req_fingerprint(username: string) -> string is
+    return jsonw::obj([jsonw::f_str("cmd", "fingerprint_auth"), jsonw::f_str("username", username)])
+end
+
+pub fn req_start_session(username: string, session: string) -> string is
+    return jsonw::obj([jsonw::f_str("cmd", "start_session"), jsonw::f_str("username", username), jsonw::f_str("session", session)])
+end
+
+pub fn req_power(action: string) -> string is
+    return jsonw::obj([jsonw::f_str("cmd", "power_action"), jsonw::f_str("action", action)])
+end
+
+;; ── Odpowiedzi -> JSON dla frontendu ────────────────────────────────────────
+
+;; auth_success / auth_failure -> AuthResult {success, username?, error?, attempts_left}
+pub fn auth_result(line: string) -> string is
+    let t: string = jsonw::get_str(line, "type")
+    if t == "auth_success" is
+        return jsonw::obj([jsonw::f_bool("success", true), jsonw::f_str("username", jsonw::get_str(line, "username")), jsonw::f_int("attempts_left", 0)])
+    end
+    if t == "auth_failure" is
+        return jsonw::obj([jsonw::f_bool("success", false), jsonw::f_str("error", jsonw::get_str(line, "reason")), jsonw::f_int("attempts_left", jsonw::get_int(line, "attempts_left", 0))])
+    end
+    let mut msg: string = "Unexpected response from daemon"
+    if t == "error" is msg = jsonw::get_str(line, "message") end
+    return jsonw::obj([jsonw::f_bool("success", false), jsonw::f_str("error", msg), jsonw::f_int("attempts_left", 0)])
+end
+
+pub fn auth_unavailable(msg: string) -> string is
+    return jsonw::obj([jsonw::f_bool("success", false), jsonw::f_str("error", msg), jsonw::f_int("attempts_left", 0)])
+end
