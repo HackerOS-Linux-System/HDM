@@ -1,0 +1,238 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+
+;; ── Limiter prób ────────────────────────────────────────────────────────────
+;; Autorytet blokady jest tutaj, nie w UI: klient nie obejdzie jej ponownym połączeniem.
+;; Backoff: 30 s, 60 s, 120 s ... max 300 s; fail_count rośnie przez okna blokady.
+
+pub fn lockout_after_attempts() -> int is
+    return 5
+end
+
+pub fn lockout_base_secs() -> int is
+    return 30
+end
+
+pub fn lockout_max_secs() -> int is
+    return 300
+end
+
+;; until: moment (ms, zegar monotoniczny) końca blokady; 0 = brak
+pub struct RateLimiter is
+    pub users: [string]
+    pub fails: [int]
+    pub until: [int]
+end
+
+pub struct LimitCheck is
+    pub locked:       bool
+    pub seconds_left: int
+end
+
+pub struct FailureResult is
+    pub limiter:       RateLimiter
+    pub attempts_left: int
+    ;; > 0 tylko dla próby, która WŁAŚNIE założyła nową blokadę
+    pub locked_for:    int
+end
+
+pub fn new_limiter() -> RateLimiter is
+    return RateLimiter { users: [], fails: [], until: [] }
+end
+
+fn index_of(rl: RateLimiter, user: string) -> int is
+    let mut i: int = 0
+    while i < array_len(rl.users) is
+        if rl.users[i] == user is return i end
+        i += 1
+    end
+    return -1
+end
+
+fn set_int_at(a: [int], idx: int, v: int) -> [int] is
+    let mut out: [int] = []
+    let mut i: int = 0
+    while i < array_len(a) is
+        if i == idx is
+            out = array_push(out, v)
+        else is
+            out = array_push(out, a[i])
+        end
+        i += 1
+    end
+    return out
+end
+
+;; Wołać przed KAŻDĄ próbą (hasło, wzorzec, odcisk — jeden wspólny licznik na użytkownika).
+pub fn check(rl: RateLimiter, user: string, now: int) -> LimitCheck is
+    let i: int = index_of(rl, user)
+    if i >= 0 && rl.until[i] > now is
+        return LimitCheck { locked: true, seconds_left: (rl.until[i] - now) / 1000 + 1 }
+    end
+    return LimitCheck { locked: false, seconds_left: 0 }
+end
+
+pub fn record_success(rl: RateLimiter, user: string) -> RateLimiter is
+    let idx: int = index_of(rl, user)
+    if idx < 0 is return rl end
+    let mut users: [string] = []
+    let mut fails: [int] = []
+    let mut until: [int] = []
+    let mut i: int = 0
+    while i < array_len(rl.users) is
+        if i != idx is
+            users = array_push(users, rl.users[i])
+            fails = array_push(fails, rl.fails[i])
+            until = array_push(until, rl.until[i])
+        end
+        i += 1
+    end
+    return RateLimiter { users: users, fails: fails, until: until }
+end
+
+pub fn record_failure(rl0: RateLimiter, user: string, now: int) -> FailureResult is
+    let mut rl: RateLimiter = rl0
+    let mut idx: int = index_of(rl, user)
+    if idx < 0 is
+        rl = RateLimiter { users: array_push(rl.users, user), fails: array_push(rl.fails, 0), until: array_push(rl.until, 0) }
+        idx = array_len(rl.users) - 1
+    end
+    ;; wygasła blokada nie może dalej wisieć; fail_count celowo NIE jest zerowany (eskalacja)
+    let mut until: int = rl.until[idx]
+    if until != 0 && until <= now is until = 0 end
+    let fails: int = rl.fails[idx] + 1
+    if fails >= lockout_after_attempts() is
+        let mut over: int = fails - lockout_after_attempts()
+        if over > 10 is over = 10 end
+        let mut dur: int = lockout_base_secs()
+        let mut k: int = 0
+        while k < over is
+            dur = dur * 2
+            k += 1
+        end
+        if dur > lockout_max_secs() is dur = lockout_max_secs() end
+        let nrl: RateLimiter = RateLimiter { users: rl.users, fails: set_int_at(rl.fails, idx, fails), until: set_int_at(rl.until, idx, now + dur * 1000) }
+        return FailureResult { limiter: nrl, attempts_left: 0, locked_for: dur }
+    end
+    let nrl2: RateLimiter = RateLimiter { users: rl.users, fails: set_int_at(rl.fails, idx, fails), until: set_int_at(rl.until, idx, until) }
+    return FailureResult { limiter: nrl2, attempts_left: lockout_after_attempts() - fails, locked_for: 0 }
+end
+
+;; ── Konta ───────────────────────────────────────────────────────────────────
+
+pub fn status_active() -> int is
+    return 0
+end
+
+pub fn status_locked() -> int is
+    return 1
+end
+
+pub fn status_no_password() -> int is
+    return 2
+end
+
+pub fn status_not_found() -> int is
+    return 3
+end
+
+;; Czysta logika (testowalna bez roota): `shadow` to treść /etc/shadow.
+;; Porównujemy CAŁE pole 0 — prefiks "user:" pozwalałby na nazwy w rodzaju "root:!".
+pub fn parse_account_status(shadow: string, username: string) -> int is
+    let lines: [string] = string_split(shadow, "\n")
+    let mut i: int = 0
+    while i < array_len(lines) is
+        let parts: [string] = string_split(lines[i], ":")
+        i += 1
+        if array_len(parts) < 1 || parts[0] != username is continue end
+        if array_len(parts) < 2 is return status_active() end
+        let hash: string = parts[1]
+        if string_starts_with(hash, "!") is return status_locked() end
+        if hash == "*" || hash == "" is return status_no_password() end
+        return status_active()
+    end
+    return status_not_found()
+end
+
+;; Dozwolona nazwa użytkownika: bez ':' / nowych linii / '/' — chroni przed fałszowaniem pól i ścieżek.
+pub fn valid_username(u: string) -> bool is
+    if u == "" || string_len(u) > 64 is return false end
+    if string_contains(u, ":") || string_contains(u, "\n") || string_contains(u, "\r") || string_contains(u, "/") is return false end
+    return true
+end
+
+;; "" = OK, inaczej komunikat błędu
+fn check_account_status_ok(username: string) -> string is
+    let shadow: string = fs::read("/etc/shadow")
+    if shadow == "" is return "" end      ;; nie da się odczytać shadow — decyzja należy do dalszych kroków
+    let st: int = parse_account_status(shadow, username)
+    if st == status_not_found() is return "User '" + username + "' does not exist" end
+    if st == status_locked() is return "Account is locked" end
+    if st == status_no_password() is return "Account has no password set" end
+    return ""
+end
+
+fn verify_shadow_password(username: string, password: string) -> string is
+    let shadow: string = fs::read("/etc/shadow")
+    if shadow == "" is return "Cannot read /etc/shadow - HDM must run as root" end
+    let lines: [string] = string_split(shadow, "\n")
+    let mut hash: string = ""
+    let mut found: bool = false
+    let mut i: int = 0
+    while i < array_len(lines) is
+        let parts: [string] = string_split(lines[i], ":")
+        i += 1
+        if array_len(parts) >= 1 && parts[0] == username is
+            if array_len(parts) < 2 is return "Malformed shadow entry" end
+            hash = parts[1]
+            found = true
+            break
+        end
+    end
+    if !found is return "User '" + username + "' not found in shadow" end
+    if hash == "" || string_starts_with(hash, "!") || string_starts_with(hash, "*") is
+        return "Account is locked or has no password"
+    end
+    if shim::hdm_crypt_verify(password, hash) == 1 is return "" end
+    return "Incorrect password"
+end
+
+;; Hasło: "" = sukces, inaczej powód odmowy.
+pub fn authenticate(username: string, password: string) -> string is
+    if !valid_username(username) is return "Invalid user name" end
+    let st: string = check_account_status_ok(username)
+    if st != "" is return st end
+    return verify_shadow_password(username, password)
+end
+
+;; Wzorzec 3x3 (sekwencja indeksów 0-8): SHA-256(username ":" bajty) porównywany z
+;; {home}/.config/Blue-Environment/pattern.hash. Brak pliku = odmowa (fail closed).
+pub fn hash_pattern(username: string, pattern: [int]) -> string is
+    let mut csv: string = ""
+    let mut i: int = 0
+    while i < array_len(pattern) is
+        if i > 0 is csv = csv + "," end
+        csv = csv + to_string(pattern[i])
+        i += 1
+    end
+    return shim::hdm_pattern_hash(username, csv)
+end
+
+pub fn authenticate_pattern(username: string, home: string, pattern: [int]) -> string is
+    if array_len(pattern) < 4 is return "Pattern too short" end
+    let mut i: int = 0
+    while i < array_len(pattern) is
+        if pattern[i] < 0 || pattern[i] > 8 is return "Invalid pattern" end
+        i += 1
+    end
+    if !valid_username(username) is return "Invalid user name" end
+    let st: string = check_account_status_ok(username)
+    if st != "" is return st end
+    let hash_path: string = home + "/.config/Blue-Environment/pattern.hash"
+    if !fs::exists(hash_path) is
+        return "No pattern configured for this user - set one up in Settings -> Security"
+    end
+    let stored: string = string_trim(fs::read(hash_path))
+    if hash_pattern(username, pattern) == stored is return "" end
+    return "Pattern not recognised"
+end
