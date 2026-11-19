@@ -1,0 +1,51 @@
+extern static [c, "hdmshim"] is
+    ;; JSON (poprawne escapowanie i parsowanie \uXXXX)
+    fn hdm_json_escape(s: string) -> string
+    fn hdm_json_get_str(json: string, key: string) -> string
+    fn hdm_json_get_int(json: string, key: string, fallback: int) -> int
+    fn hdm_json_get_bool(json: string, key: string, fallback: int) -> int
+    fn hdm_json_get_int_array(json: string, key: string) -> string
+
+    ;; hash i hasła
+    fn hdm_sha256_hex(s: string) -> string
+    fn hdm_pattern_hash(user: string, csv: string) -> string
+    fn hdm_crypt_verify(password: string, hash: string) -> int
+
+    ;; sygnały, czas, różne
+    fn hdm_install_signals() -> int
+    fn hdm_term_requested() -> int
+    fn hdm_getuid() -> int
+    fn hdm_now_ms() -> int
+    fn hdm_sleep_ms(ms: int) -> int
+    fn hdm_exit(code: int) -> int
+    fn hdm_strftime(fmt: string) -> string
+    fn hdm_uuid4() -> string
+
+    ;; pliki / uprawnienia / VT
+    fn hdm_chown(path: string, uid: int, gid: int) -> int
+    fn hdm_chmod(path: string, mode: int) -> int
+    fn hdm_readable(path: string) -> int
+    fn hdm_mkdir_p(path: string, mode: int) -> int
+    fn hdm_vt_switch(vt: int) -> int
+
+    ;; gniazda Unix i linie
+    fn hdm_listen_unix(path: string, mode: int) -> int
+    fn hdm_connect_unix(path: string) -> int
+    fn hdm_accept(lfd: int) -> int
+    fn hdm_close(fd: int) -> int
+    fn hdm_poll(fds: string, timeout_ms: int) -> string
+    fn hdm_fill(fd: int) -> int
+    fn hdm_next_line(fd: int) -> string
+    fn hdm_read_line(fd: int, timeout_ms: int) -> string
+    fn hdm_io_status() -> int
+    fn hdm_try_line(fd: int) -> string
+    fn hdm_send(fd: int, data: string) -> int
+
+    ;; procesy
+    fn hdm_spawn(argv: string, env: string, cwd: string, drop_user: string, uid: int, gid: int) -> int
+    fn hdm_spawn_error() -> int
+    fn hdm_child_poll(pid: int) -> int
+    fn hdm_tree_rss_mb(pid: int) -> int
+    fn hdm_kill(pid: int, sig: int) -> int
+    fn hdm_spawn_detached(shell_cmd: string) -> int
+end
