@@ -1,0 +1,416 @@
+use "bit -> hdm-common" from "common"
+use "std -> test" from "test"
+use "std -> fs" from "fs"
+mod config
+mod pam_auth
+mod users
+mod session
+mod ipc
+mod greeter
+
+;; ── .hk ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_hk_basic_sections_and_types() is
+    let doc: hk::HkDoc = hk::load("! komentarz\n[general]\n-> vt => 3\n-> name => \"a b\"\n-> flag => true\n-> list => [\"x\", y, 3]\n")
+    assert_eq(doc.error, "")
+    assert_eq(hk::get_int(doc, "general.vt", 0), 3)
+    assert_eq(hk::get(doc, "general.name", ""), "a b")
+    assert_true(hk::get_bool(doc, "general.flag", false))
+    let l: [string] = hk::get_array(doc, "general.list")
+    assert_eq(array_len(l), 3)
+    assert_eq(l[0], "x")
+    assert_eq(l[1], "y")
+    assert_eq(l[2], "3")
+end
+
+#[test]
+fn test_hk_nested_keys() is
+    let doc: hk::HkDoc = hk::load("[s]\n-> a\n--> b => 1\n--> c\n---> d => 2\n")
+    assert_eq(hk::get_int(doc, "s.a.b", 0), 1)
+    assert_eq(hk::get_int(doc, "s.a.c.d", 0), 2)
+end
+
+#[test]
+fn test_hk_interpolation_is_resolved() is
+    let doc: hk::HkDoc = hk::load("[project]\n-> base => /srv\n[paths]\n-> bg => \"$" + jsonw::lb() + "project.base" + jsonw::rb() + "/wall.png\"\n")
+    assert_eq(doc.error, "")
+    assert_eq(hk::get(doc, "paths.bg", ""), "/srv/wall.png")
+end
+
+#[test]
+fn test_hk_unresolved_or_cyclic_interpolation_is_an_error() is
+    let a: hk::HkDoc = hk::load("[x]\n-> a => $" + jsonw::lb() + "x.missing" + jsonw::rb() + "\n")
+    assert_true(a.error != "")
+    let b: hk::HkDoc = hk::load("[x]\n-> a => $" + jsonw::lb() + "x.b" + jsonw::rb() + "\n-> b => $" + jsonw::lb() + "x.a" + jsonw::rb() + "\n")
+    assert_true(b.error != "")
+end
+
+#[test]
+fn test_hk_malformed_is_reported_as_an_error_not_a_crash() is
+    assert_true(hk::load("[broken\n").error != "")
+    assert_true(hk::load("this is not hk\n").error != "")
+    assert_true(hk::load("-x y\n").error != "")
+end
+
+#[test]
+fn test_hk_later_value_wins_and_quoted_escapes() is
+    let doc: hk::HkDoc = hk::load("[g]\n-> a => 1\n-> a => 2\n-> q => \"he said \\\"hi\\\"\"\n")
+    assert_eq(hk::get_int(doc, "g.a", 0), 2)
+    assert_eq(hk::get(doc, "g.q", ""), "he said \"hi\"")
+end
+
+;; ── config ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_default_config_content_is_valid_hk() is
+    let r: config::LoadResult = config::load_config_str(config::default_config_content())
+    assert_eq(r.error, "")
+end
+
+#[test]
+fn test_default_config_content_matches_defaults() is
+    let r: config::LoadResult = config::load_config_str(config::default_config_content())
+    let d: config::HdmConfig = config::defaults()
+    assert_eq(r.cfg.greeter_path, d.greeter_path)
+    assert_eq(r.cfg.vt, d.vt)
+    assert_eq(r.cfg.compositor, d.compositor)
+    assert_eq(r.cfg.theme, d.theme)
+    assert_eq(r.cfg.background, d.background)
+    assert_eq(r.cfg.clock_format, d.clock_format)
+    assert_eq(r.cfg.show_user_list, d.show_user_list)
+    assert_eq(r.cfg.allow_root, d.allow_root)
+    assert_eq(r.cfg.allow_guest, d.allow_guest)
+    assert_eq(r.cfg.minimum_uid, d.minimum_uid)
+    assert_eq(r.cfg.maximum_uid, d.maximum_uid)
+    assert_eq(r.cfg.default_session, d.default_session)
+    assert_eq(r.cfg.live_autologin, d.live_autologin)
+    assert_eq(r.cfg.live_marker_path, d.live_marker_path)
+    assert_eq(r.cfg.power_shutdown, d.power_shutdown)
+    assert_eq(r.cfg.power_reboot, d.power_reboot)
+    assert_eq(r.cfg.power_suspend, d.power_suspend)
+    assert_eq(r.cfg.power_hibernate, d.power_hibernate)
+    assert_eq(array_len(r.cfg.sessions_dir), array_len(d.sessions_dir))
+end
+
+;; Spakowany config/hdm.hk nie może się rozjechać z wbudowanym tekstem (daemon/ -> ../config/hdm.hk).
+#[test]
+fn test_packaged_config_matches_default_config() is
+    let packaged: config::LoadResult = config::load_config_str(fs::read("../config/hdm.hk"))
+    assert_eq(packaged.error, "")
+    let builtin: config::LoadResult = config::load_config_str(config::default_config_content())
+    assert_eq(packaged.cfg.vt, builtin.cfg.vt)
+    assert_eq(packaged.cfg.compositor, builtin.cfg.compositor)
+    assert_eq(packaged.cfg.theme, builtin.cfg.theme)
+    assert_eq(packaged.cfg.background, builtin.cfg.background)
+    assert_eq(packaged.cfg.default_session, builtin.cfg.default_session)
+    assert_eq(packaged.cfg.power_shutdown, builtin.cfg.power_shutdown)
+    assert_eq(array_len(packaged.cfg.sessions_dir), array_len(builtin.cfg.sessions_dir))
+end
+
+#[test]
+fn test_missing_autologin_section_leaves_autologin_fields_empty() is
+    let r: config::LoadResult = config::load_config_str(config::default_config_content())
+    assert_eq(r.cfg.autologin_user, "")
+    assert_eq(r.cfg.autologin_session, "")
+end
+
+#[test]
+fn test_partial_hk_file_falls_back_to_defaults() is
+    let r: config::LoadResult = config::load_config_str("[general]\n-> theme => midnight\n")
+    assert_eq(r.error, "")
+    assert_eq(r.cfg.theme, "midnight")
+    assert_eq(r.cfg.vt, config::defaults().vt)
+    assert_eq(r.cfg.compositor, "cage")
+    assert_eq(r.cfg.power_reboot, "reboot")
+end
+
+#[test]
+fn test_autologin_section_is_read_when_present() is
+    let r: config::LoadResult = config::load_config_str("[autologin]\n-> user => alice\n-> session => gnome\n-> delay => 5\n")
+    assert_eq(r.cfg.autologin_user, "alice")
+    assert_eq(r.cfg.autologin_session, "gnome")
+    assert_eq(r.cfg.autologin_delay, 5)
+end
+
+#[test]
+fn test_live_mode_settings_default_and_override() is
+    let d: config::LoadResult = config::load_config_str("[general]\n-> vt => 1\n")
+    assert_true(d.cfg.live_autologin)
+    assert_eq(d.cfg.live_marker_path, ".config/Blue-Environment/.live")
+    let o: config::LoadResult = config::load_config_str("[autologin]\n-> live_detect => false\n-> live_marker => \".live-session\"\n")
+    assert_true(!o.cfg.live_autologin)
+    assert_eq(o.cfg.live_marker_path, ".live-session")
+end
+
+#[test]
+fn test_default_session_section() is
+    let a: config::LoadResult = config::load_config_str("[default]\n-> session => gnome\n")
+    assert_eq(a.cfg.default_session, "gnome")
+    let b: config::LoadResult = config::load_config_str("[general]\n-> vt => 1\n")
+    assert_eq(b.cfg.default_session, "blue-environment")
+end
+
+#[test]
+fn test_compositor_and_greeter_user() is
+    let a: config::LoadResult = config::load_config_str("[general]\n-> compositor => none\n-> greeter_user => _hdm\n-> compositor_renderer => pixman\n")
+    assert_eq(a.cfg.compositor, "none")
+    assert_eq(a.cfg.greeter_user, "_hdm")
+    assert_eq(a.cfg.compositor_renderer, "pixman")
+    let b: config::LoadResult = config::load_config_str("[general]\n-> vt => 1\n")
+    assert_eq(b.cfg.greeter_user, "")
+    assert_eq(b.cfg.compositor_renderer, "")
+end
+
+#[test]
+fn test_sessions_dir_array_is_parsed() is
+    let r: config::LoadResult = config::load_config_str("[general]\n-> sessions_dir => [\"/a\", \"/b\"]\n")
+    assert_eq(array_len(r.cfg.sessions_dir), 2)
+    assert_eq(r.cfg.sessions_dir[0], "/a")
+    assert_eq(r.cfg.sessions_dir[1], "/b")
+end
+
+#[test]
+fn test_interpolation_is_resolved_before_reading_values() is
+    let r: config::LoadResult = config::load_config_str("[project]\n-> base => /srv/walls\n[general]\n-> background => \"$" + jsonw::lb() + "project.base" + jsonw::rb() + "/w.png\"\n")
+    assert_eq(r.error, "")
+    assert_eq(r.cfg.background, "/srv/walls/w.png")
+end
+
+#[test]
+fn test_malformed_hk_is_reported_as_an_error() is
+    let r: config::LoadResult = config::load_config_str("[general\n-> vt => 1\n")
+    assert_true(r.error != "")
+    assert_eq(r.cfg.vt, 1)
+end
+
+;; ── limiter ─────────────────────────────────────────────────────────────────
+
+fn fail_n(rl0: pam_auth::RateLimiter, user: string, n: int, now: int) -> pam_auth::FailureResult is
+    let mut rl: pam_auth::RateLimiter = rl0
+    let mut last: pam_auth::FailureResult = pam_auth::record_failure(rl, user, now)
+    let mut i: int = 1
+    while i < n is
+        rl = last.limiter
+        last = pam_auth::record_failure(rl, user, now)
+        i += 1
+    end
+    return last
+end
+
+#[test]
+fn test_allows_first_attempt() is
+    let rl: pam_auth::RateLimiter = pam_auth::new_limiter()
+    assert_true(!pam_auth::check(rl, "alice", 0).locked)
+end
+
+#[test]
+fn test_locks_out_after_threshold() is
+    let r: pam_auth::FailureResult = fail_n(pam_auth::new_limiter(), "alice", 5, 1000)
+    assert_eq(r.locked_for, 30)
+    assert_eq(r.attempts_left, 0)
+    let c: pam_auth::LimitCheck = pam_auth::check(r.limiter, "alice", 1000)
+    assert_true(c.locked)
+    assert_eq(c.seconds_left, 31)
+end
+
+#[test]
+fn test_attempts_left_counts_down() is
+    let r: pam_auth::FailureResult = fail_n(pam_auth::new_limiter(), "alice", 2, 0)
+    assert_eq(r.attempts_left, 3)
+    assert_eq(r.locked_for, 0)
+end
+
+#[test]
+fn test_lockout_is_per_username() is
+    let r: pam_auth::FailureResult = fail_n(pam_auth::new_limiter(), "alice", 5, 0)
+    assert_true(pam_auth::check(r.limiter, "alice", 0).locked)
+    assert_true(!pam_auth::check(r.limiter, "bob", 0).locked)
+end
+
+#[test]
+fn test_success_clears_fail_count() is
+    let r: pam_auth::FailureResult = fail_n(pam_auth::new_limiter(), "alice", 4, 0)
+    let cleared: pam_auth::RateLimiter = pam_auth::record_success(r.limiter, "alice")
+    let again: pam_auth::FailureResult = pam_auth::record_failure(cleared, "alice", 0)
+    assert_eq(again.attempts_left, 4)
+end
+
+#[test]
+fn test_lockout_expires() is
+    let r: pam_auth::FailureResult = fail_n(pam_auth::new_limiter(), "alice", 5, 0)
+    assert_true(pam_auth::check(r.limiter, "alice", 29000).locked)
+    assert_true(!pam_auth::check(r.limiter, "alice", 30001).locked)
+end
+
+#[test]
+fn test_backoff_grows_and_caps() is
+    ;; 5. porażka -> 30 s; po wygaśnięciu kolejne okna: 60, 120, 240, 300 (limit)
+    let mut r: pam_auth::FailureResult = fail_n(pam_auth::new_limiter(), "alice", 5, 0)
+    assert_eq(r.locked_for, 30)
+    let mut now: int = 0
+    let expect: [int] = [60, 120, 240, 300, 300]
+    let mut k: int = 0
+    while k < array_len(expect) is
+        now = now + 400000
+        r = pam_auth::record_failure(r.limiter, "alice", now)
+        assert_eq(r.locked_for, expect[k])
+        k += 1
+    end
+end
+
+;; ── /etc/shadow ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_account_status_detection() is
+    let shadow: string = "root:$6$abc$def:19000:0:99999:7:::\nlocked:!$6$abc$def:19000::::::\nnopass:*:19000::::::\nempty::19000::::::\nalice:$y$j9T$salt$hash:19000::::::\n"
+    assert_eq(pam_auth::parse_account_status(shadow, "alice"), pam_auth::status_active())
+    assert_eq(pam_auth::parse_account_status(shadow, "locked"), pam_auth::status_locked())
+    assert_eq(pam_auth::parse_account_status(shadow, "nopass"), pam_auth::status_no_password())
+    assert_eq(pam_auth::parse_account_status(shadow, "empty"), pam_auth::status_no_password())
+    assert_eq(pam_auth::parse_account_status(shadow, "ghost"), pam_auth::status_not_found())
+end
+
+#[test]
+fn test_account_status_matches_whole_username_field() is
+    ;; "ali" nie może trafić w wiersz "alice", a "root:$6" nie może „zgadnąć” wpisu roota
+    let shadow: string = "alice:$6$x$y:1::::::\nroot:$6$x$y:1::::::\n"
+    assert_eq(pam_auth::parse_account_status(shadow, "ali"), pam_auth::status_not_found())
+    assert_eq(pam_auth::parse_account_status(shadow, "root:$6$x$y"), pam_auth::status_not_found())
+end
+
+#[test]
+fn test_username_validation() is
+    assert_true(pam_auth::valid_username("alice"))
+    assert_true(!pam_auth::valid_username(""))
+    assert_true(!pam_auth::valid_username("a:b"))
+    assert_true(!pam_auth::valid_username("a/b"))
+    assert_true(!pam_auth::valid_username("a\nb"))
+end
+
+;; ── wzorzec ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_pattern_hash_properties() is
+    let a: string = pam_auth::hash_pattern("alice", [0, 1, 2, 4])
+    assert_eq(string_len(a), 64)
+    assert_eq(a, pam_auth::hash_pattern("alice", [0, 1, 2, 4]))
+    assert_true(a != pam_auth::hash_pattern("bob", [0, 1, 2, 4]))
+    assert_true(a != pam_auth::hash_pattern("alice", [0, 1, 2, 5]))
+end
+
+#[test]
+fn test_pattern_too_short_is_rejected_before_touching_disk() is
+    assert_eq(pam_auth::authenticate_pattern("alice", "/nonexistent", [0, 1, 2]), "Pattern too short")
+end
+
+;; ── użytkownicy ─────────────────────────────────────────────────────────────
+
+#[test]
+fn test_live_marker_paths() is
+    assert_eq(users::live_marker_for_home("/home/a", ".config/x/.live"), "/home/a/.config/x/.live")
+    assert_eq(users::live_marker_for_home("/home/a", "~/.live"), "/home/a/.live")
+    assert_eq(users::live_marker_for_home("/home/a", "/.live"), "/home/a/.live")
+    assert_eq(users::live_marker_for_home("/home/a/", ".live"), "/home/a/.live")
+    assert_eq(users::live_marker_for_home("/home/a", ".live-session"), "/home/a/.live-session")
+end
+
+#[test]
+fn test_passwd_line_parsing() is
+    let e: users::PwEntry = users::parse_passwd_line("alice:x:1000:1001:Alice A,,,:/home/alice:/bin/bash")
+    assert_eq(e.name, "alice")
+    assert_eq(e.uid, 1000)
+    assert_eq(e.gid, 1001)
+    assert_eq(e.home, "/home/alice")
+    assert_eq(e.shell, "/bin/bash")
+    assert_eq(users::parse_passwd_line("broken:line").uid, -1)
+    assert_eq(users::parse_passwd_line("a:x:notanumber:1:::/bin/sh").uid, -1)
+end
+
+;; ── sesje ───────────────────────────────────────────────────────────────────
+
+fn mk(id: string) -> session::SessionInfo is
+    return session::SessionInfo { id: id, name: id, exec: "/usr/bin/" + id, session_type: "wayland", desktop_names: [], icon: "", comment: "" }
+end
+
+#[test]
+fn test_default_session_resolution() is
+    let list: [session::SessionInfo] = [mk("blue-environment"), mk("gnome")]
+    assert_eq(session::resolve_default_session("gnome", list), "gnome")
+    assert_eq(session::resolve_default_session("plasma", list), "blue-environment")
+    assert_eq(session::resolve_default_session("", list), "blue-environment")
+end
+
+#[test]
+fn test_desktop_file_parsing() is
+    let ok: session::SessionInfo = session::parse_desktop_content("[Desktop Entry]\nName=Gnome\nExec=gnome-session\nDesktopNames=GNOME;Unity;\nIcon=gnome\n[Other]\nName=ignored\n", "gnome", "wayland")
+    assert_eq(ok.id, "gnome")
+    assert_eq(ok.name, "Gnome")
+    assert_eq(ok.exec, "gnome-session")
+    assert_eq(array_len(ok.desktop_names), 2)
+    assert_eq(ok.icon, "gnome")
+    assert_eq(session::parse_desktop_content("[Desktop Entry]\nName=X\nExec=x\nNoDisplay=true\n", "x", "x11").id, "")
+    assert_eq(session::parse_desktop_content("[Desktop Entry]\nName=X\n", "x", "x11").id, "")
+end
+
+#[test]
+fn test_blue_environment_sorts_first() is
+    let sorted: [session::SessionInfo] = session::sort_sessions([mk("zeta"), mk("alpha"), mk("blue-environment")])
+    assert_eq(sorted[0].id, "blue-environment")
+    assert_eq(sorted[1].id, "alpha")
+    assert_eq(sorted[2].id, "zeta")
+end
+
+#[test]
+fn test_session_json_omits_empty_optionals() is
+    let j: string = session::session_json(mk("gnome"))
+    assert_true(!string_contains(j, "icon"))
+    assert_true(!string_contains(j, "comment"))
+    assert_true(string_contains(j, "\"id\":\"gnome\""))
+end
+
+;; ── greeter ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_greeter_unset_or_unknown_user_resolves_to_root() is
+    assert_eq(greeter::resolve_greeter_runtime_user("").uid, 0)
+    assert_eq(greeter::resolve_greeter_runtime_user("__hdm_test_user_that_does_not_exist__").gid, 0)
+end
+
+#[test]
+fn test_compositor_argv() is
+    assert_eq(greeter::compositor_argv("none", "/usr/bin/hdm-greeter"), "/usr/bin/hdm-greeter")
+    assert_eq(greeter::compositor_argv("cage", "/g"), "cage\n-s\n--\n/g")
+    assert_eq(greeter::compositor_argv("/usr/bin/labwc", "/g"), "/usr/bin/labwc\n-S\n/g")
+    assert_eq(greeter::compositor_argv("somekiosk", "/g"), "somekiosk\n-s\n--\n/g")
+end
+
+;; ── IPC ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_lockout_response_shapes() is
+    let plain: string = ipc::lockout_aware_failure("Incorrect password", 3, 0)
+    assert_eq(jsonw::get_str(plain, "type"), "auth_failure")
+    assert_eq(jsonw::get_str(plain, "reason"), "Incorrect password")
+    assert_eq(jsonw::get_int(plain, "attempts_left", -1), 3)
+    let locked: string = ipc::lockout_aware_failure("Incorrect password", 0, 60)
+    assert_true(string_contains(jsonw::get_str(locked, "reason"), "locked for 60s"))
+    assert_eq(jsonw::get_int(locked, "attempts_left", -1), 0)
+end
+
+#[test]
+fn test_json_roundtrip_with_hostile_strings() is
+    let nasty: string = "p\"a\\ss\nw" + jsonw::lb() + "o" + jsonw::rb() + "rd"
+    let j: string = jsonw::obj([jsonw::f_str("password", nasty), jsonw::f_int("n", 7), jsonw::f_bool("ok", true)])
+    assert_eq(jsonw::get_str(j, "password"), nasty)
+    assert_eq(jsonw::get_int(j, "n", 0), 7)
+    assert_true(jsonw::get_bool(j, "ok", false))
+end
+
+#[test]
+fn test_json_int_array() is
+    let a: [int] = jsonw::get_int_array(jsonw::obj([jsonw::f_raw("pattern", "[0,1,2,4]")]), "pattern")
+    assert_eq(array_len(a), 4)
+    assert_eq(a[3], 4)
+    assert_eq(array_len(jsonw::get_int_array(jsonw::obj([jsonw::f_int("x", 1)]), "pattern")), 0)
+end
