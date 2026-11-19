@@ -1,0 +1,36 @@
+@font-face {
+  font-family: 'Oxanium';
+  font-weight: 400;
+  font-style: normal;
+  src: url('../fonts/Oxanium-400.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'Oxanium';
+  font-weight: 700;
+  font-style: normal;
+  src: url('../fonts/Oxanium-700.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'DM Sans';
+  font-weight: 400;
+  font-style: normal;
+  src: url('../fonts/DM-Sans-400.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'DM Sans';
+  font-weight: 700;
+  font-style: normal;
+  src: url('../fonts/DM-Sans-700.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-weight: 400;
+  font-style: normal;
+  src: url('../fonts/JetBrains-Mono-400.ttf') format('truetype');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-weight: 700;
+  font-style: normal;
+  src: url('../fonts/JetBrains-Mono-700.ttf') format('truetype');
+}
