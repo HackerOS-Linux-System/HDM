@@ -1,0 +1,129 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+
+pub fn default_theme() -> string is
+    return "graphite"
+end
+
+pub fn default_wallpaper() -> string is
+    return "/usr/share/wallpapers/HackerOS-Wallpapers/Wallpaper23.png"
+end
+
+pub fn default_clock_format() -> string is
+    return "%H:%M"
+end
+
+;; "" = nie ustawiono (Option::None); show_user_list: "" | "true" | "false"
+pub struct General is
+    pub background:     string
+    pub theme:          string
+    pub clock_format:   string
+    pub show_user_list: string
+end
+
+pub fn empty_general() -> General is
+    return General { background: "", theme: "", clock_format: "", show_user_list: "" }
+end
+
+pub fn read_general_text(content: string) -> General is
+    let doc: hk::HkDoc = hk::parse(content)
+    if doc.error != "" is return empty_general() end
+    let mut sul: string = ""
+    if hk::has(doc, "general.show_user_list") is
+        sul = if hk::get_bool(doc, "general.show_user_list", true) then "true" else "false"
+    end
+    return General {
+        background: hk::get(doc, "general.background", ""),
+        theme: hk::get(doc, "general.theme", ""),
+        clock_format: hk::get(doc, "general.clock_format", ""),
+        show_user_list: sul
+    }
+end
+
+pub fn read_general_section(path: string) -> General is
+    if !fs::exists(path) is return empty_general() end
+    return read_general_text(fs::read(path))
+end
+
+;; $XDG_CONFIG_HOME/hdm/hdm.hk albo $HOME/.config/hdm/hdm.hk; "" gdy żadne nie jest ustawione.
+pub fn user_config_path() -> string is
+    let xdg: string = env_get("XDG_CONFIG_HOME")
+    if xdg != "" is return xdg + "/hdm/hdm.hk" end
+    let home: string = env_get("HOME")
+    if home != "" is return home + "/.config/hdm/hdm.hk" end
+    return ""
+end
+
+pub fn user_default_config_content() -> string is
+    let mut s: string = ""
+    s = s + "! ~/.config/hdm/hdm.hk - per-user HDM greeter defaults\n"
+    s = s + "!\n"
+    s = s + "! Format: .hk - the same format as /etc/hdm/hdm.hk. Full syntax reference:\n"
+    s = s + "!   https://hackeros-linux-system.github.io/HackerOS-Website/tools-docs/hk.html\n"
+    s = s + "!\n"
+    s = s + "! This is a second, user-editable layer of the greeter's default settings.\n"
+    s = s + "! /etc/hdm/hdm.hk (root-managed) always wins for any key it sets; anything left\n"
+    s = s + "! unset there falls back to whatever is set here, and only then to the greeter's own\n"
+    s = s + "! built-in defaults. Safe to edit freely - no root needed - and never overwritten\n"
+    s = s + "! once it exists.\n"
+    s = s + "\n"
+    s = s + "[general]\n"
+    s = s + "-> theme        => " + default_theme() + "\n"
+    s = s + "-> background   => \"" + default_wallpaper() + "\"\n"
+    s = s + "-> clock_format => \"" + default_clock_format() + "\"\n"
+    return s
+end
+
+;; Przy pierwszym uruchomieniu zakłada edytowalną warstwę użytkownika (nigdy nie nadpisuje, nigdy nie jest fatalne).
+pub fn ensure_user_default_config() is
+    let path: string = user_config_path()
+    if path == "" || fs::exists(path) is return end
+    let parts: [string] = string_split(path, "/")
+    let mut dir: string = ""
+    let mut i: int = 0
+    while i < array_len(parts) - 1 is
+        if i > 0 is dir = dir + "/" end
+        dir = dir + parts[i]
+        i += 1
+    end
+    if dir != "" is fs::mkdir(dir) end
+    fs::write(path, user_default_config_content())
+end
+
+;; system wygrywa pole po polu
+pub fn merge_general(primary: General, fallback: General) -> General is
+    return General {
+        background: if primary.background != "" then primary.background else fallback.background,
+        theme: if primary.theme != "" then primary.theme else fallback.theme,
+        clock_format: if primary.clock_format != "" then primary.clock_format else fallback.clock_format,
+        show_user_list: if primary.show_user_list != "" then primary.show_user_list else fallback.show_user_list
+    }
+end
+
+pub fn resolve_general_section(system_path: string) -> General is
+    let system: General = read_general_section(system_path)
+    if system.background != "" && system.theme != "" && system.clock_format != "" && system.show_user_list != "" is
+        return system
+    end
+    let up: string = user_config_path()
+    if up == "" || !fs::exists(up) is return system end
+    return merge_general(system, read_general_section(up))
+end
+
+pub fn config_path() -> string is
+    let p: string = env_get("HDM_CONFIG")
+    if p == "" is return "/etc/hdm/hdm.hk" end
+    return p
+end
+
+;; Ścieżka tapety: [general] -> background (jeśli istnieje), potem znane lokalizacje; "" = brak.
+pub fn find_wallpaper(g: General) -> string is
+    if g.background != "" && fs::exists(g.background) is return g.background end
+    let candidates: [string] = [default_wallpaper(), "/etc/hdm/wallpaper.png", "/etc/hdm/wallpaper.jpg", "/usr/share/wallpapers/default.png"]
+    let mut i: int = 0
+    while i < array_len(candidates) is
+        if fs::exists(candidates[i]) is return candidates[i] end
+        i += 1
+    end
+    return ""
+end
