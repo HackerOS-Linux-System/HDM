@@ -1,9 +1,15 @@
 # HDM — HackerOS Display Manager
 
 **HDM** is a production display manager for Linux, built with:
-- **Rust** daemon (`hdm`) — manages PAM auth, sessions, VT switching
-- **Tauri + React** greeter (`hdm-greeter`) — the login UI
+- **H#** daemon (`hdm`) — password/pattern/fingerprint auth, sessions, VT switching
+- **Silver + Solid.js** greeter (`hdm-greeter`) — the login UI: backend in H#, frontend in
+  TypeScript + Solid.js, rendered by Silver's own engine (SDL2 — no WebView, no GTK, no WebKit)
 - **Unix socket IPC** — secure daemon↔greeter communication
+- a small **C shim** (`common/native/`) for what H#'s std doesn't have (Unix sockets, `setuid`,
+  VT ioctls, `crypt_r`, robust JSON) — bound through `extern static`
+
+> HDM was originally written in TypeScript + Rust + Tauri. This is the H# / Silver rewrite —
+> see [`MIGRATION.md`](MIGRATION.md) for what moved where and what changed.
 
 HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
 
@@ -11,8 +17,8 @@ HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
 
 ## Features
 
-- 🔐 **Real PAM authentication** via `/etc/shadow` + crypt(3)
-- 🖼️ **Aurora glassmorphism UI** — animated background, user avatars
+- 🔐 **Real authentication** via `/etc/shadow` + `crypt_r(3)` (libcrypt: yescrypt, SHA-512, bcrypt…), 3×3 pattern, fprintd fingerprint
+- 🖼️ **Aurora glassmorphism UI** — animated background, user avatars (Silver: CSS animations, `backdrop-filter`)
 - 🖥️ **Session management** — Wayland & X11 sessions from `.desktop` files
 - 👥 **Multi-user** — lists system users (UID ≥ 1000), user avatars from `~/.face`
 - ⚡ **Autologin** support with configurable delay, plus marker-file **live-mode
@@ -24,9 +30,9 @@ HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
   [`cage`](https://github.com/cage-kiosk/cage) Wayland kiosk compositor by
   default (see [Compositor](#compositor))
 - 🔌 **Power menu** — shutdown, reboot, suspend, hibernate with countdown
-- 🔒 **Brute-force protection** — 5 attempt limit per session
+- 🔒 **Brute-force protection** — 5 attempts, then an escalating lockout enforced by the daemon (password, pattern *and* fingerprint share one counter)
 - 📋 **systemd integration** — replaces `display-manager.service`
-- 🎨 **Wallpaper support** — reads `/etc/hdm/wallpaper.png`
+- 🎨 **Wallpaper support** — `[general] -> background`, falling back to `/etc/hdm/wallpaper.png`
 
 ---
 
@@ -48,11 +54,11 @@ HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
 │  ┌───────────────▼─────────────────────────────────────┐ │
 │  │  cage -s -- hdm-greeter                              │ │
 │  │    (single-app Wayland kiosk compositor, see         │ │
-│  │     "Compositor" below — hosts the WebKit view       │ │
-│  │     the greeter itself has no compositor of its own) │ │
+│  │     "Compositor" below — hosts the Silver window;    │ │
+│  │     the greeter has no compositor of its own)        │ │
 │  │  ┌─────────────────────────────────────────────────┐ │ │
-│  │  │  hdm-greeter (Tauri, runs as _hdm user)          │ │ │
-│  │  │    Solid.js UI (TypeScript + Tailwind)           │ │ │
+│  │  │  hdm-greeter (Silver, runs as root / _hdm)       │ │ │
+│  │  │    Solid.js UI (TypeScript + plain CSS)          │ │ │
 │  │  │    Clock, user list, password input              │ │ │
 │  │  │    Session picker, power menu                    │ │ │
 │  │  └─────────────────┬─────────────────────────────────┘ │ │
@@ -65,52 +71,53 @@ HDM is a rival to SDDM, GDM, and LightDM, designed for the HackerOS.
 
 **Does `hdm` launch `hdm-greeter` itself?** Yes — `hdm` is the only thing
 that ever starts `hdm-greeter`; there's no separate systemd unit for it.
-`launch_greeter()` in `daemon/src/main.rs` spawns it (by default wrapped in
+`greeter::launch()` in `daemon/src/greeter.h#` spawns it (by default wrapped in
 `cage`, see below) on every boot and again every time the greeter process
-exits (e.g. after "Cancel" or a crash), in a loop for as long as `hdm`
-itself is running. `hdm-greeter` then connects back to `hdm`'s Unix socket
+exits (e.g. after "Cancel" or a crash — with a 1 s backoff), in the daemon's event
+loop (`daemon/src/main.h#`) for as long as `hdm` itself is running. While a user session runs the
+greeter is stopped (it must release the DRM master) and comes back after logout. `hdm-greeter` then connects back to `hdm`'s Unix socket
 (`/run/hdm/hdm.sock`) as an ordinary IPC client — it never talks to PAM,
 `/etc/shadow`, or spawns sessions itself.
 
 ---
 
-## Quick Install
+## Build & install
+
+Requirements: the [H# compiler `h#`](https://github.com/HackerOS-Linux-System/H-Sharp) and the
+[`bit`](https://github.com/HackerOS-Linux-System/bit) package manager (resolves the `silver` dependency
+from the index), a C compiler + `libcrypt` headers, and Node.js ≥ 20 + npm for the frontend. Silver links
+SDL2 statically — see Silver's `docs/building-linux.md` for its system packages.
 
 ```bash
-# Clone / extract HDM
-cd HDM
+# Debian/Ubuntu: native shim + frontend toolchain
+sudo apt install build-essential libcrypt-dev nodejs npm cage
 
-# Build and install (requires Rust + Node.js)
-sudo bash install.sh
+# Build everything and install (root):
+hl build.hl build
+sudo hl build.hl install            # binaries -> /usr/bin/hdm, /usr/bin/hdm-greeter; unit, PAM, config
 
-# With autologin:
-sudo bash install.sh --autologin myusername
-```
-
----
-
-## Manual Build
-
-```bash
-# Install build dependencies (Debian/Ubuntu)
-apt install cargo nodejs npm libpam-dev
-
-# Enable
 sudo systemctl enable --now hdm
 ```
 
-> **Rust toolchain requirement:** HDM's config parser depends on
-> [`hk-parser`](https://hackeros-linux-system.github.io/HackerOS-Website/tools-docs/hk.html)
-> (crates.io, `hk-parser = "0.3.2"`), which pulls in `indexmap 2.14.x` →
-> `hashbrown 0.17.x`, a dependency that declares Rust's 2024 edition. That
-> means building `daemon/` and `greeter/` now requires **Rust 1.85 or
-> newer** (`rustup update stable` if you're on an older toolchain — the
-> `rustc`/`cargo` shipped by some LTS distro repos, e.g. Ubuntu 24.04's
-> `apt install cargo`, is only 1.75 and is too old for this). This is a
-> requirement of the `.hk`-parsing dependency itself, not something HDM's
-> own code opts into.
+Individual steps (what `build.hl` runs):
 
----
+```bash
+sh common/native/build.sh                       # libhdmshim.a (C shim, statically linked by bit)
+(cd daemon  && bit build)                       # hdm
+(cd greeter/frontend && npm install && npm run build)   # Solid.js -> dist/app.js + dist/app.css
+(cd greeter && node ../tools/embed.mjs && bit build)    # embeds dist/ into the binary, builds hdm-greeter
+```
+
+The greeter is a **single static binary**: the built frontend (`index.html`, `app.js`, `app.css`,
+fonts) is embedded by `tools/embed.mjs` (same format as `silver embed`), so there is no `frontend/`
+directory to ship.
+
+Tests: `bit test` at the root runs the C selftest, the daemon's H# tests, the greeter's H# tests and
+the frontend's vitest suite. `python3 tools/lint_hsharp.py common daemon greeter` is a compiler-free
+syntax lint.
+
+Local frontend development (no Silver needed): `cd greeter/frontend && npm run watch`; outside Silver the
+bridge (`src/lib/utils/silver.ts`) falls back to a mock backend returning the same wire format.
 
 ## Configuration
 
@@ -151,7 +158,7 @@ not TOML:
 `/etc/hdm/hdm.hk` always wins. Anything it doesn't set falls back to a
 second, user-editable layer at `~/.config/hdm/hdm.hk` (same `.hk` format,
 auto-created with the same defaults the first time the greeter runs — see
-`ensure_user_default_config()` in `greeter/src/main.rs`), and only then to
+`gconfig::ensure_user_default_config()` in `greeter/src/gconfig.h#`), and only then to
 the greeter's own built-in defaults.
 
 ### Autologin
@@ -171,7 +178,7 @@ There are two independent autologin mechanisms:
    `.config/Blue-Environment/.live`), HDM logs that user in automatically —
    no password prompt, no `[autologin] -> user` to configure, and the
    account doesn't need to fall inside `minimum_uid`/`maximum_uid` either
-   (`daemon/src/users.rs::find_live_user` deliberately doesn't gate on that
+   (`daemon/src/users.h#::find_live_user` deliberately doesn't gate on that
    range, since a live image's built-in account commonly sits outside
    whatever range an admin configures for an *installed* system). Root and
    `nologin`/`false`-shell accounts are still excluded unless `allow_root`
@@ -198,7 +205,7 @@ only checked when `[autologin] -> user` is unset.
 matched against the `id` of a `.desktop` file found by scanning `[general]
 -> sessions_dir`, or the built-in `"blue-environment"` fallback session
 (which always exists even with no matching `.desktop` file — see
-`list_sessions()` in `daemon/src/session.rs`). It's used to:
+`list_sessions()` in `daemon/src/session.h#`). It's used to:
 
 - pre-select a session in the greeter's session picker (sent to the
   greeter as `default_session` in the daemon's `GetInfo`/welcome IPC
@@ -213,7 +220,7 @@ HDM logs a warning and falls back to `"blue-environment"`.
 
 `[general] -> compositor` (default `cage`) is the Wayland compositor HDM
 wraps `greeter_path` in before launching it — `hdm-greeter` is a windowed
-Tauri/WebKit application, not a compositor, so something has to give it a
+Silver (SDL2) application, not a compositor, so something has to give it a
 Wayland display to render into pre-login. By default HDM runs it as:
 
 ```
@@ -240,16 +247,16 @@ labwc -S /usr/bin/hdm-greeter
 ```
 
 This is a genuinely different code path, not just a different binary name:
-`apply_compositor_args()` in `daemon/src/main.rs` builds cage's `-s --
+`greeter::compositor_argv()` in `daemon/src/greeter.h#` builds cage's `-s --
 <cmd>` and labwc's `-S <cmd>` separately, because the two aren't
 interchangeable — labwc doesn't understand `--` as an argument terminator
 at all (`-S -- <path>` would hand it the literal string `"--"` as its
 startup command and the greeter would never run), and only labwc's
 `-S`/`--session` — not its `-s`/`--startup` — exits the compositor when the
-greeter does, which HDM's respawn loop in `launch_greeter()` needs.
+greeter does, which HDM's respawn loop needs.
 `compositor` values other than `"none"`, `"cage"`, or `"labwc"` are assumed
 to be cage-compatible (most other single-app Wayland kiosk compositors
-are); if that's wrong for some other binary, `apply_compositor_args()` is
+are); if that's wrong for some other binary, `compositor_argv()` is
 the place to teach HDM its contract too.
 
 Since cage and labwc are separate compositors with their own renderer code
@@ -293,156 +300,69 @@ tail -f /var/log/hdm/hdm.log
 
 ## Troubleshooting
 
-**Running `hdm` manually without root: `HDM must run as root (UID 0)`.**
-Expected — HDM reads `/etc/shadow` and issues VT ioctls, both of which
-require root, so it refuses to start otherwise (see `main.rs`, checked via
-`libc::getuid()`). This has nothing to do with `sudo` specifically: the
-shipped `hdm.service` sets `User=root`/`Group=root` explicitly, so
-`systemctl start hdm` (or booting into it as `display-manager.service`)
-already runs it as root automatically — no interactive `sudo` involved at
-all. `sudo hdm` in a terminal is only useful for manually testing/debugging
-outside systemd, and by default `sudo` does *not* forward your shell's
-`XDG_RUNTIME_DIR`, `WAYLAND_DISPLAY`, etc. into root's environment — which
-matters for the next issue below.
+**Running `hdm` manually without root: `HDM must run as root`.**
+Expected — HDM reads `/etc/shadow` and issues VT ioctls, both of which require root, so it refuses to
+start otherwise (checked via `getuid()` in `daemon/src/main.h#`). The shipped `hdm.service` sets
+`User=root`/`Group=root` explicitly, so `systemctl start hdm` already runs it as root. `sudo hdm` in a
+terminal is only useful for manual testing outside systemd.
 
-**Greeter log spammed with `[../cage.c:298] XDG_RUNTIME_DIR is not set in
-the environment`, repeating forever until you `Ctrl+C`.** This was a real
-bug, fixed: `launch_greeter()` used to spawn `cage` without ever setting
-`XDG_RUNTIME_DIR`, so cage exited immediately every time — and because
-`launch_greeter()` relaunches the greeter whenever it exits, that turned
-into a tight crash/respawn loop rather than a one-time error. It now
-creates and owns `/run/user/<uid>` (uid 0 unless you've set `[general] ->
-greeter_user`) and sets `XDG_RUNTIME_DIR` to it before spawning, exactly
-like `session::launch_session()` already did for real user sessions. A
-1-second backoff was also added between relaunch attempts so any *future*
-fast-crash-loop stays readable in the log instead of flooding it. If you
-still see this after updating, check that `/run` isn't mounted read-only
-and that nothing else is deleting `/run/user/0` out from under HDM.
+**`cage`: `XDG_RUNTIME_DIR is not set in the environment`, repeating.** HDM creates and owns
+`/run/user/<uid>` (uid 0 unless `[general] -> greeter_user` is set) and sets `XDG_RUNTIME_DIR` before
+spawning the compositor (`greeter::launch()`), with a 1 s backoff between relaunches. If you still see
+it, check that `/run` isn't read-only and nothing deletes `/run/user/0` under HDM.
 
-**`sudo: nie udało się rozwiązać nazwy hosta ...` /
-`sudo: unable to resolve host ...` before HDM even starts.** Unrelated to
-HDM — it's `sudo` itself trying to resolve your machine's configured
-hostname and failing, almost always because that hostname isn't listed in
-`/etc/hosts`. Fix it at the OS level, e.g. add a line like
-`127.0.1.1 <your-hostname>` to `/etc/hosts` (`hostnamectl hostname` shows
-what it's currently set to). It's a warning, not a fatal error — `sudo`
-still runs the command afterwards.
+**Greeter runs but the screen is black / cage fails to open a device.** cage started but couldn't open
+`/dev/dri`/`/dev/input` — typically because `[general] -> greeter_user` points at a user without device
+access. Leave `greeter_user` unset (root can open these devices directly), or put that user in the
+`video`/`render`/`input` groups with an active seat session (`seatd`/`systemd-logind`) — see
+`config/sysusers.d/hdm.conf`.
 
-**Greeter runs but the screen is black / cage fails to open a device.**
-This means cage started (so `XDG_RUNTIME_DIR` is fine) but couldn't open
-`/dev/dri`/`/dev/input` — typically because `[general] -> greeter_user` is
-set to a user that lacks device access. Either leave `greeter_user` unset
-(root can always open these devices directly), or make sure that user is
-in the `video`/`render`/`input` groups and has an active seat session
-(`seatd`, or `systemd-logind` on a system with elogind/logind support) —
-see `config/sysusers.d/hdm.conf` for a starting point.
-
-**Cage crashes with `Assertion \`surface->initialized' failed` right
-after the DRM/EGL init lines in the log (GPU/CRTCs/planes all found fine,
-so this isn't the black-screen device-access issue above), and the
-greeter's own log separately shows a `Gdk-Message: ... Error reading
-events from display: Broken pipe`.** Read those as two separate crashes,
-in order, not one: the `Gdk-Message` line is printed by GDK *inside the
-greeter process* (`hdm-greeter` is a GTK/WebKitGTK app) when it loses its
-Wayland connection because the *server* — cage — already died. So the
-real crash is cage's `Assertion 'surface->initialized' failed`, and it
-happens in cage/wlroots' own GLES2-over-EGL/GBM renderer while setting up
-its *own* output render surface — before the greeter's WebKit view has
-rendered anything at all. (An earlier version of this note attributed
-this to WebKitGTK's DMA-BUF renderer instead; `hdm-greeter` does hit a
-similar-looking but genuinely different crash from that, which HDM works
-around unconditionally by setting `WEBKIT_DISABLE_DMABUF_RENDERER=1` in
-the greeter's environment — but that setting can't touch a crash that
-happens this early, inside cage itself, before WebKit is in the picture.)
-This is a real cage/wlroots bug on the affected GPU driver combination
-(seen on some Intel i915 setups) — not something fixable from HDM's Rust
-code — but HDM can work around it: set
+**cage crashes with `Assertion 'surface->initialized' failed` right after the DRM/EGL init lines.**
+A cage/wlroots GLES2-over-EGL/GBM bug on some GPU driver combinations (seen on some Intel i915 setups) —
+not fixable from HDM, but avoidable:
 ```
 [general]
 -> compositor_renderer => pixman
 ```
-in `/etc/hdm/hdm.hk` (see the commented-out example already in the
-shipped config) and restart HDM. This forces cage/wlroots onto its
-software Pixman renderer via `WLR_RENDERER=pixman`, which never touches
-EGL/GBM and so never hits this assertion — at some GPU compositing
-performance cost that doesn't matter for a login screen. This isn't
-HDM's default because it's a targeted workaround for specific broken
-driver combinations, not something every install needs.
+forces wlroots' software renderer (`WLR_RENDERER=pixman`). You can also try `compositor => labwc`.
+The old WebKitGTK-specific workarounds (`WEBKIT_DISABLE_DMABUF_RENDERER`, `WEBKIT_DISABLE_COMPOSITING_MODE`,
+`GDK_GL=disable`) are gone: Silver draws with SDL2's software renderer and never opens its own EGL context
+in the greeter, so the "second crash" after switching to pixman no longer exists.
 
-**If you set `compositor_renderer => pixman` and still hit the same
-`Assertion 'surface->initialized' failed`, but now preceded by `libEGL
-warning: failed to get driver name for fd -1` / `MESA-LOADER: failed to
-retrieve device information` instead of any cage-side `[render/egl.c:...]`
-lines** — that's not the same crash recurring, it's the *next* one: cage
-itself is fine now (the pixman renderer log line and successful DRM
-modesetting confirm that), but `hdm-greeter` is crashing instead, because
-it tries to open its own hardware-accelerated EGL/GL context, and a
-`pixman`-backed cage advertises no GBM/DRM device for clients to use, so
-that EGL init gets handed an invalid fd and the greeter dies mid-setup —
-which cage then reports as the same assertion while tearing down that
-now-orphaned surface.
+**The greeter shows a login screen but wallpaper/avatars are missing.** Silver loads `<img src>` straight
+from the file path, so the files must be readable by the user the greeter runs as (root by default).
+`[general] -> background` must be a path to an image SDL2_image can decode (PNG/JPEG/…).
 
-There are actually *two* independent places this EGL probe can come from
-in `hdm-greeter`, and current HDM disables both unconditionally in the
-greeter's environment (see `spawn_greeter_command()` in
-`daemon/src/main.rs`):
-- WebKit's own accelerated-compositing path — `WEBKIT_DISABLE_COMPOSITING_MODE=1`
-- GDK's, one layer further down — `hdm-greeter` is a GTK3 application
-  (webkit2gtk-4.1 requires GTK3, not GTK4), and GDK's Wayland backend
-  initializes its own EGL display independently of whatever WebKit does
-  with it, so `WEBKIT_DISABLE_COMPOSITING_MODE` alone doesn't reach it —
-  `GDK_GL=disable` (a separate, long-standing GTK3 env var) is needed too,
-  and is what actually stops the fd -1 probe from happening at all
+**Fingerprint scan seems to hang.** `fprintd-verify` can take up to ~30 s. The daemon runs it as a child
+process and kills it after 30 s; the greeter stays responsive and receives the result as the
+`hdm://fingerprint` event. If your reader isn't enrolled, the tab simply isn't offered.
 
-If you're still seeing this exact crash, make sure you're running a build
-from after **both** of those were added — check that `GDK_GL` (not just
-`WEBKIT_DISABLE_COMPOSITING_MODE`) appears in `daemon/src/main.rs` — and
-that the daemon binary was actually rebuilt and reinstalled, not just the
-config reloaded (none of this is configurable from `hdm.hk`; it's set in
-Rust code).
-
-If `pixman` plus all three of `WEBKIT_DISABLE_DMABUF_RENDERER`,
-`WEBKIT_DISABLE_COMPOSITING_MODE`, and `GDK_GL=disable` still doesn't
-help, or you'd rather not run a software renderer at all, try
-switching compositors entirely instead — set `[general] -> compositor =>
-labwc` (with `labwc` installed; see [Compositor](#compositor)). cage and
-labwc are two separate compositors built on the same wlroots libraries
-but with their own renderer/output code, so a crash specific to cage's
-implementation doesn't necessarily follow it to labwc. If neither helps,
-it's likely a different, underlying wlroots bug shared by both — try
-updating `cage`/`wlroots` (or `labwc`/`wlroots`) and check
-https://github.com/cage-kiosk/cage/issues.
+**`sudo: unable to resolve host ...` before HDM even starts.** Unrelated to HDM — add
+`127.0.1.1 <your-hostname>` to `/etc/hosts`.
 
 ---
 
 ## Security notes
 
-**Content Security Policy.** `greeter/tauri.conf.json` sets a CSP rather
-than leaving it `null`. `style-src` includes `'unsafe-inline'` — this is a
-deliberate, known tradeoff, not an oversight: the greeter UI sets `style="..."`
-attributes at runtime throughout (a carry-over from the original Svelte
-template's inline style bindings, kept for readability of long conditional
-style strings as template literals rather than large object literals).
-Runtime-set inline styles aren't covered by Tauri's automatic build-time
-script/style hashing, so `'unsafe-inline'` is required for the UI to render
-at all under a strict CSP. Everything else (`script-src`, `font-src`,
-`default-src`) is locked to `'self'` with no external origins. If this
-codebase migrates from string styles to `style={{...}}` objects or CSS
-classes/custom properties in the future, `'unsafe-inline'` can be dropped
-from `style-src` entirely.
+**No WebView, no CSP to maintain.** The previous Tauri build needed a Content-Security-Policy with
+`style-src 'unsafe-inline'`. Silver is a custom renderer (no browser, no network stack in the page): the
+frontend runs in QuickJS with only the `silver.invoke` bridge, and the bundle is embedded in the binary.
 
-**Fonts are self-hosted**, not loaded from Google's CDN — see
-`ui/src/fonts.css`. A login screen has to render before networking is
-necessarily up (fresh install, wifi still associating, airgapped
-machines), so HDM ships its fonts (`@fontsource/oxanium`,
-`@fontsource/dm-sans`, `@fontsource/jetbrains-mono`) as part of the built
-UI bundle instead of fetching them at runtime.
+**Passwords never touch a hand-rolled JSON parser.** `std -> json` in H# is flat and does not unescape,
+so all JSON parsing/escaping is done by the C shim (`common/native/hdm_shim.c`), which handles `\"`, `\\`,
+`\uXXXX` and surrogate pairs and is covered by `common/native/tests/selftest.c`.
 
-**Authentication rate limiting is enforced server-side**, in
-`daemon/src/pam_auth.rs::RateLimiter`, keyed by username and shared across
-every IPC connection — not just in the greeter UI's own countdown display.
-A client that skips the UI and calls the daemon's IPC commands directly
-still hits the same lockout.
+**Session processes drop privileges completely.** The child does `setsid → initgroups → setgid → setuid`
+and verifies that root cannot be regained; the Rust version skipped `initgroups`, so sessions kept root's
+supplementary groups.
+
+**Fonts are self-hosted** (merged TTFs in `greeter/frontend/fonts/`, SIL OFL) and embedded in the
+binary — a login screen has to render before the network is up.
+
+**Authentication rate limiting is enforced server-side**, in `daemon/src/pam_auth.h#` (`RateLimiter`),
+keyed by username and shared across every IPC connection and every method (password, pattern, fingerprint)
+— not just in the greeter UI's own countdown display. Usernames containing `:`, `/` or newlines are
+rejected before they can be matched against `/etc/shadow`, and entries are matched on the whole first field.
 
 ---
 
@@ -459,7 +379,7 @@ still hits the same lockout.
 | Blue Environment      | ✅   | ❌   | ❌   | ❌      |
 | Aurora UI             | ✅   | ❌   | ❌   | ❌      |
 | Glassmorphism         | ✅   | ❌   | ❌   | ❌      |
-| Rust backend          | ✅   | ✅   | ❌   | ❌      |
+| H# backend            | ✅   | ❌   | ❌   | ❌      |
 | Solid.js frontend     | ✅   | ❌   | ❌   | ❌      |
 
 ---
