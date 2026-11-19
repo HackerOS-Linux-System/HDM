@@ -1,0 +1,309 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+use "std -> time" from "time"
+mod config
+mod state
+mod users
+mod greeter
+mod logging
+
+pub struct SessionInfo is
+    pub id:            string
+    pub name:          string
+    pub exec:          string
+    pub session_type:  string
+    pub desktop_names: [string]
+    pub icon:          string
+    pub comment:       string
+end
+
+fn invalid_session() -> SessionInfo is
+    return SessionInfo { id: "", name: "", exec: "", session_type: "", desktop_names: [], icon: "", comment: "" }
+end
+
+;; id = nazwa pliku bez ".desktop"; id == "" => plik odrzucony (brak Name/Exec albo NoDisplay=true)
+pub fn parse_desktop_content(content: string, file_stem: string, session_type: string) -> SessionInfo is
+    let mut name: string = ""
+    let mut exec: string = ""
+    let mut icon: string = ""
+    let mut comment: string = ""
+    let mut names: string = ""
+    let mut hidden: bool = false
+    let mut in_entry: bool = false
+    let lines: [string] = string_split(content, "\n")
+    let mut i: int = 0
+    while i < array_len(lines) is
+        let line: string = string_trim(lines[i])
+        i += 1
+        if string_starts_with(line, "[") is
+            if line == "[Desktop Entry]" is
+                in_entry = true
+                continue
+            end
+            if in_entry is break end
+            continue
+        end
+        if !in_entry || line == "" || string_starts_with(line, "#") is continue end
+        let eq: int = string_find(line, "=")
+        if eq < 0 is continue end
+        let key: string = string_trim(string_slice(line, 0, eq))
+        let val: string = string_trim(string_slice(line, eq + 1, string_len(line)))
+        if key == "Name" is
+            name = val
+        elsif key == "Exec" is
+            exec = val
+        elsif key == "Icon" is
+            icon = val
+        elsif key == "Comment" is
+            comment = val
+        elsif key == "DesktopNames" is
+            names = val
+        elsif key == "NoDisplay" is
+            if string_lower(val) == "true" is hidden = true end
+        end
+    end
+    if hidden || name == "" || exec == "" is return invalid_session() end
+    let mut dn: [string] = []
+    let parts: [string] = string_split(names, ";")
+    let mut k: int = 0
+    while k < array_len(parts) is
+        if string_trim(parts[k]) != "" is dn = array_push(dn, string_trim(parts[k])) end
+        k += 1
+    end
+    return SessionInfo { id: file_stem, name: name, exec: exec, session_type: session_type, desktop_names: dn, icon: icon, comment: comment }
+end
+
+fn is_blue(s: SessionInfo) -> bool is
+    return string_contains(s.id, "blue-environment")
+end
+
+;; Blue Environment zawsze pierwszy, reszta alfabetycznie po nazwie.
+fn before(a: SessionInfo, b: SessionInfo) -> bool is
+    if is_blue(a) && !is_blue(b) is return true end
+    if is_blue(b) && !is_blue(a) is return false end
+    return a.name < b.name
+end
+
+pub fn sort_sessions(list: [SessionInfo]) -> [SessionInfo] is
+    let mut sorted: [SessionInfo] = []
+    let mut i: int = 0
+    while i < array_len(list) is
+        let s: SessionInfo = list[i]
+        i += 1
+        let mut placed: bool = false
+        let mut next: [SessionInfo] = []
+        let mut j: int = 0
+        while j < array_len(sorted) is
+            if !placed && before(s, sorted[j]) is
+                next = array_push(next, s)
+                placed = true
+            end
+            next = array_push(next, sorted[j])
+            j += 1
+        end
+        if !placed is next = array_push(next, s) end
+        sorted = next
+    end
+    return sorted
+end
+
+pub fn list_sessions(cfg: config::HdmConfig) -> [SessionInfo] is
+    let mut found: [SessionInfo] = []
+    let mut d: int = 0
+    while d < array_len(cfg.sessions_dir) is
+        let dir: string = cfg.sessions_dir[d]
+        d += 1
+        if !fs::is_dir(dir) is continue end
+        let stype: string = if string_contains(dir, "wayland") then "wayland" else "x11"
+        let files: [string] = fs::list_dir(dir)
+        let mut f: int = 0
+        while f < array_len(files) is
+            let fname: string = files[f]
+            f += 1
+            if !string_ends_with(fname, ".desktop") is continue end
+            let stem: string = string_slice(fname, 0, string_len(fname) - 8)
+            let s: SessionInfo = parse_desktop_content(fs::read(dir + "/" + fname), stem, stype)
+            if s.id != "" is found = array_push(found, s) end
+        end
+    end
+    let mut have_blue: bool = false
+    let mut i: int = 0
+    while i < array_len(found) is
+        if is_blue(found[i]) is have_blue = true end
+        i += 1
+    end
+    let mut sorted: [SessionInfo] = sort_sessions(found)
+    if !have_blue is
+        let blue: SessionInfo = SessionInfo {
+            id: "blue-environment", name: "Blue Environment", exec: "blue-environment-session",
+            session_type: "wayland", desktop_names: ["Blue-Environment"], icon: "", comment: "HackerOS Blue Environment desktop"
+        }
+        sorted = array_concat([blue], sorted)
+    end
+    return sorted
+end
+
+;; Domyślna sesja: skonfigurowana, jeśli istnieje na liście; w każdym innym wypadku "blue-environment".
+pub fn resolve_default_session(configured: string, list: [SessionInfo]) -> string is
+    if configured != "" is
+        let mut i: int = 0
+        while i < array_len(list) is
+            if list[i].id == configured is return configured end
+            i += 1
+        end
+        logging::warn("[default] -> session '" + configured + "' does not match any session found under sessions_dir - falling back to 'blue-environment'")
+    end
+    return "blue-environment"
+end
+
+pub fn get_default_session(cfg: config::HdmConfig) -> string is
+    return resolve_default_session(cfg.default_session, list_sessions(cfg))
+end
+
+pub fn session_json(s: SessionInfo) -> string is
+    return jsonw::obj([
+        jsonw::f_str("id", s.id),
+        jsonw::f_str("name", s.name),
+        jsonw::f_str("exec", s.exec),
+        jsonw::f_str("session_type", s.session_type),
+        jsonw::f_raw("desktop_names", jsonw::str_arr(s.desktop_names)),
+        jsonw::f_opt("icon", s.icon),
+        jsonw::f_opt("comment", s.comment)
+    ])
+end
+
+pub fn active_json(a: state::ActiveSession) -> string is
+    return jsonw::obj([
+        jsonw::f_str("id", a.id),
+        jsonw::f_str("username", a.username),
+        jsonw::f_str("session_name", a.session_name),
+        jsonw::f_str("session_type", a.session_type),
+        jsonw::f_int("pid", a.pid),
+        jsonw::f_int("started_at", a.started_at),
+        jsonw::f_opt("display", a.display),
+        jsonw::f_opt("wayland_display", a.wayland_display)
+    ])
+end
+
+fn session_json_pretty(a: state::ActiveSession) -> string is
+    return active_json(a) + "\n"
+end
+
+pub struct LaunchResult is
+    pub st:         state::DaemonState
+    pub session_id: string
+    pub error:      string
+end
+
+fn fail(st: state::DaemonState, msg: string) -> LaunchResult is
+    logging::error("Session launch failed: " + msg)
+    return LaunchResult { st: st, session_id: "", error: msg }
+end
+
+fn session_env(username: string, e: users::PwEntry, session_type: string) -> string is
+    let rd: string = "/run/user/" + to_string(e.uid)
+    let mut env: [string] = [
+        "USER=" + username,
+        "LOGNAME=" + username,
+        "HOME=" + e.home,
+        "SHELL=" + e.shell,
+        "PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin",
+        "XDG_RUNTIME_DIR=" + rd,
+        "XDG_CONFIG_HOME=" + e.home + "/.config",
+        "XDG_DATA_HOME=" + e.home + "/.local/share",
+        "XDG_CACHE_HOME=" + e.home + "/.cache",
+        "XDG_SEAT=seat0",
+        "XDG_SESSION_CLASS=user",
+        "DBUS_SESSION_BUS_ADDRESS=unix:path=" + rd + "/bus"
+    ]
+    if session_type == "wayland" is
+        env = array_concat(env, [
+            "XDG_SESSION_TYPE=wayland", "MOZ_ENABLE_WAYLAND=1", "QT_QPA_PLATFORM=wayland",
+            "GDK_BACKEND=wayland,x11", "SDL_VIDEODRIVER=wayland", "ELECTRON_OZONE_PLATFORM_HINT=wayland"
+        ])
+    else is
+        env = array_concat(env, ["XDG_SESSION_TYPE=x11", "DISPLAY=:0"])
+    end
+    let lang: string = env_get("LANG")
+    if lang != "" is env = array_push(env, "LANG=" + lang) end
+    return jsonw::join(env, "\n")
+end
+
+;; Uruchamia sesję `session_id` dla `username`. Greeter jest zatrzymywany (zwalnia DRM master) i nie
+;; wraca, dopóki sesja działa. Dziecko: setsid -> initgroups -> setgid -> setuid (z weryfikacją).
+pub fn launch(st0: state::DaemonState, username: string, session_id: string) -> LaunchResult is
+    let list: [SessionInfo] = list_sessions(st0.cfg)
+    let mut found: SessionInfo = invalid_session()
+    let mut i: int = 0
+    while i < array_len(list) is
+        if list[i].id == session_id is found = list[i] end
+        i += 1
+    end
+    if found.id == "" is return fail(st0, "Unknown session '" + session_id + "'") end
+    if string_contains(found.exec, "\n") || string_contains(found.exec, "\r") is
+        return fail(st0, "Session '" + session_id + "' has an invalid Exec line")
+    end
+    let e: users::PwEntry = users::lookup(username)
+    if e.uid < 0 is return fail(st0, "User '" + username + "' not found") end
+
+    let uuid: string = shim::hdm_uuid4()
+    logging::info("Launching '" + session_id + "' (" + found.exec + ") for user '" + username + "' uid=" + to_string(e.uid))
+
+    let rd: string = "/run/user/" + to_string(e.uid)
+    shim::hdm_mkdir_p(rd, 448)
+    shim::hdm_chown(rd, e.uid, e.gid)
+    shim::hdm_chmod(rd, 448)
+
+    ;; greeter musi zniknąć przed startem kompozytora sesji
+    let mut st: state::DaemonState = greeter::stop(st0)
+    st.greeter_wanted = false
+
+    let started: int = time::now_unix()
+    let mut active: state::ActiveSession = state::ActiveSession {
+        id: uuid, username: username, session_name: session_id, session_type: found.session_type,
+        pid: 0, started_at: started, display: if found.session_type == "x11" then ":0" else "", wayland_display: ""
+    }
+    shim::hdm_mkdir_p(state::sessions_run_dir(), 493)
+    let session_file: string = state::sessions_run_dir() + "/" + uuid + ".json"
+    fs::write(session_file, session_json_pretty(active))
+
+    let pid: int = shim::hdm_spawn("sh\n-c\n" + found.exec, session_env(username, e, found.session_type), e.home, username, e.uid, e.gid)
+    if pid < 0 is
+        fs::remove(session_file)
+        st.greeter_wanted = true
+        st.greeter_retry_at = shim::hdm_now_ms() + 1000
+        return fail(st, "spawn failed (code " + to_string(shim::hdm_spawn_error()) + ")")
+    end
+    logging::info("Session '" + uuid + "' PID=" + to_string(pid))
+    active.pid = pid
+    let mut sess: [state::ActiveSession] = st.sessions
+    sess = array_push(sess, active)
+    st.sessions = sess
+    users::save_last_session(username, session_id)
+    return LaunchResult { st: st, session_id: uuid, error: "" }
+end
+
+;; Wołane z pętli, gdy proces sesji się zakończył.
+pub fn finish(st: state::DaemonState, idx: int) -> state::DaemonState is
+    let a: state::ActiveSession = st.sessions[idx]
+    logging::info("Session '" + a.id + "' ended")
+    fs::remove(state::sessions_run_dir() + "/" + a.id + ".json")
+    let mut rest: [state::ActiveSession] = []
+    let mut i: int = 0
+    while i < array_len(st.sessions) is
+        if i != idx is rest = array_push(rest, st.sessions[i]) end
+        i += 1
+    end
+    let mut n: state::DaemonState = st
+    n.sessions = rest
+    if a.username == "guest" is
+        logging::info("Guest session ended - cleaning up temporary account")
+        users::cleanup_guest_account()
+    end
+    ;; po wylogowaniu wraca ekran logowania
+    if array_len(rest) == 0 is
+        n.greeter_wanted = true
+        n.greeter_retry_at = shim::hdm_now_ms()
+    end
+    return n
+end
