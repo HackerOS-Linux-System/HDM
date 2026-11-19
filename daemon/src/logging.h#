@@ -1,0 +1,33 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+
+pub fn log_dir() -> string is
+    let rd: string = env_get("XDG_RUNTIME_DIR")
+    if rd != "" is return rd + "/hdm/logs" end
+    return "/tmp/hdm-logs"
+end
+
+pub fn init() is
+    if shim::hdm_mkdir_p(log_dir(), 493) != 1 is
+        write("WARN  Could not create log directory '" + log_dir() + "', logging to stdout only")
+    end
+end
+
+fn emit(level: string, msg: string) is
+    let line: string = shim::hdm_strftime("%Y-%m-%dT%H:%M:%S") + " " + level + " " + msg
+    write(line)
+    let path: string = log_dir() + "/hdm.log." + shim::hdm_strftime("%Y-%m-%d")
+    fs::append(path, line + "\n")
+end
+
+pub fn info(msg: string) is
+    emit("INFO ", msg)
+end
+
+pub fn warn(msg: string) is
+    emit("WARN ", msg)
+end
+
+pub fn error(msg: string) is
+    emit("ERROR", msg)
+end
