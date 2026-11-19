@@ -1,0 +1,245 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+mod config
+mod state
+mod users
+mod session
+mod greeter
+mod ipc
+mod logging
+mod pam_auth
+mod vt
+
+fn client_exists(st: state::DaemonState, fd: int) -> bool is
+    let mut i: int = 0
+    while i < array_len(st.clients) is
+        if st.clients[i].fd == fd is return true end
+        i += 1
+    end
+    return false
+end
+
+fn fd_list(st: state::DaemonState) -> string is
+    let mut parts: [string] = [to_string(st.listen_fd)]
+    let mut i: int = 0
+    while i < array_len(st.clients) is
+        parts = array_push(parts, to_string(st.clients[i].fd))
+        i += 1
+    end
+    return jsonw::join(parts, ",")
+end
+
+fn accept_client(st: state::DaemonState) -> state::DaemonState is
+    let c: int = shim::hdm_accept(st.listen_fd)
+    let mut n: state::DaemonState = st
+    if c < 0 is return n end
+    logging::info("Greeter client connected")
+    n.clients = array_push(n.clients, state::Client { fd: c, auth_user: "" })
+    ;; powitalna odpowiedź Info zaraz po połączeniu
+    shim::hdm_send(c, ipc::info_json(n) + "\n")
+    return n
+end
+
+fn drop_client(st: state::DaemonState, fd: int) -> state::DaemonState is
+    logging::info("Greeter client disconnected")
+    shim::hdm_close(fd)
+    return state::remove_client(st, fd)
+end
+
+fn serve_client(st0: state::DaemonState, fd: int) -> state::DaemonState is
+    let mut st: state::DaemonState = st0
+    let got: int = shim::hdm_fill(fd)
+    let mut line: string = shim::hdm_next_line(fd)
+    while line != "" is
+        st = ipc::handle_line(st, fd, line)
+        if !client_exists(st, fd) is return st end
+        line = shim::hdm_next_line(fd)
+    end
+    if got < 0 is
+        return drop_client(st, fd)
+    end
+    return st
+end
+
+fn process_ready(st0: state::DaemonState, ready: string) -> state::DaemonState is
+    let mut st: state::DaemonState = st0
+    let fds: [string] = string_split(ready, ",")
+    let mut i: int = 0
+    while i < array_len(fds) is
+        let fd: int = str_to_int(fds[i])
+        i += 1
+        if fd == st.listen_fd is
+            st = accept_client(st)
+        elsif client_exists(st, fd) is
+            st = serve_client(st, fd)
+        end
+    end
+    return st
+end
+
+fn remove_fp_job(st: state::DaemonState, idx: int) -> state::DaemonState is
+    let mut rest: [state::FpJob] = []
+    let mut i: int = 0
+    while i < array_len(st.fp_jobs) is
+        if i != idx is rest = array_push(rest, st.fp_jobs[i]) end
+        i += 1
+    end
+    let mut n: state::DaemonState = st
+    n.fp_jobs = rest
+    return n
+end
+
+;; Jeden „takt”: greeter, sesje, odciski palców, autologin.
+fn tick(st0: state::DaemonState) -> state::DaemonState is
+    let now: int = shim::hdm_now_ms()
+    let mut st: state::DaemonState = st0
+
+    ;; ── greeter ──
+    if st.greeter_pid > 0 is
+        let rc: int = shim::hdm_child_poll(st.greeter_pid)
+        if rc != -1 is
+            st.greeter_pid = 0
+            if rc == 0 is
+                logging::info("Greeter exited normally")
+                st.greeter_retry_at = now
+            else is
+                logging::warn("Greeter exited with code " + to_string(rc) + " - relaunching in 1s (see the log lines above this for why)")
+                st.greeter_retry_at = now + 1000
+            end
+        end
+    end
+    ;; Nadzór pamięci: interfejs w H# (bez GC) może rosnąć przy długim bezczynnym ekranie logowania.
+    ;; Ekran logowania nie ma stanu do utraty — restart jest bezpieczniejszy niż ubicie przez OOM-killera.
+    if st.greeter_pid > 0 && st.cfg.greeter_memory_limit > 0 && now >= st.greeter_mem_check_at is
+        st.greeter_mem_check_at = now + 5000
+        let mb: int = shim::hdm_tree_rss_mb(st.greeter_pid)
+        if mb > st.cfg.greeter_memory_limit is
+            logging::warn("Greeter uses " + to_string(mb) + " MiB (limit " + to_string(st.cfg.greeter_memory_limit) + " MiB) - restarting it")
+            st = greeter::stop(st)
+            st.greeter_retry_at = now
+        end
+    end
+    if st.greeter_wanted && st.greeter_pid == 0 && now >= st.greeter_retry_at is
+        let pid: int = greeter::launch(st.cfg)
+        if pid > 0 is
+            st.greeter_pid = pid
+        else is
+            st.greeter_retry_at = now + 5000
+        end
+    end
+
+    ;; ── sesje użytkowników ──
+    let mut i: int = 0
+    while i < array_len(st.sessions) is
+        let rc: int = shim::hdm_child_poll(st.sessions[i].pid)
+        if rc != -1 is
+            st = session::finish(st, i)
+        else is
+            i += 1
+        end
+    end
+
+    ;; ── odciski palców ──
+    let mut j: int = 0
+    while j < array_len(st.fp_jobs) is
+        let job: state::FpJob = st.fp_jobs[j]
+        let rc: int = shim::hdm_child_poll(job.pid)
+        if rc != -1 is
+            st = remove_fp_job(st, j)
+            st = ipc::finish_fingerprint(st, job, rc)
+        elsif now >= job.deadline is
+            shim::hdm_kill(job.pid, 9)
+            shim::hdm_sleep_ms(50)
+            shim::hdm_child_poll(job.pid)
+            st = remove_fp_job(st, j)
+            st = ipc::finish_fingerprint(st, job, 1)
+        else is
+            j += 1
+        end
+    end
+
+    ;; ── autologin ──
+    if st.autologin_at >= 0 && now >= st.autologin_at is
+        st.autologin_at = -1
+        let mut sid: string = st.autologin_session
+        if sid == "" is sid = session::get_default_session(st.cfg) end
+        logging::info("Auto-login: starting '" + sid + "' for '" + st.autologin_user + "'")
+        let r: session::LaunchResult = session::launch(st, st.autologin_user, sid)
+        st = r.st
+        if r.error != "" is
+            logging::error("Auto-login failed (" + r.error + ") - falling back to the greeter")
+            st.greeter_wanted = true
+            st.greeter_retry_at = now
+        end
+    end
+    return st
+end
+
+fn shutdown(st0: state::DaemonState) is
+    logging::info("SIGTERM received - shutting down HDM")
+    let st: state::DaemonState = greeter::stop(st0)
+    let mut i: int = 0
+    while i < array_len(st.clients) is
+        shim::hdm_close(st.clients[i].fd)
+        i += 1
+    end
+    shim::hdm_close(st.listen_fd)
+    fs::remove(state::socket_path())
+end
+
+fn run(st0: state::DaemonState) is
+    let mut st: state::DaemonState = st0
+    while true is
+        if shim::hdm_term_requested() == 1 is
+            shutdown(st)
+            return
+        end
+        st = tick(st)
+        let ready: string = shim::hdm_poll(fd_list(st), 100)
+        if ready != "" is
+            st = process_ready(st, ready)
+        end
+    end
+end
+
+fn main() is
+    logging::init()
+    logging::info("HDM v" + ipc::version() + " starting")
+
+    if shim::hdm_getuid() != 0 is
+        write("HDM must run as root")
+        shim::hdm_exit(1)
+    end
+    shim::hdm_install_signals()
+
+    shim::hdm_mkdir_p("/run/hdm", 493)
+    shim::hdm_mkdir_p(state::sessions_run_dir(), 493)
+
+    config::ensure_default_config()
+    let loaded: config::LoadResult = config::load_config(state::config_path())
+    if loaded.error != "" is
+        logging::warn(loaded.error)
+        logging::warn("Using default configuration")
+    end
+    let mut st: state::DaemonState = state::new_state(loaded.cfg)
+
+    let lfd: int = shim::hdm_listen_unix(state::socket_path(), 438)
+    if lfd < 0 is
+        logging::error("Failed to bind HDM socket at " + state::socket_path())
+        shim::hdm_exit(1)
+    end
+    st.listen_fd = lfd
+    logging::info("HDM IPC listening on " + state::socket_path())
+
+    ;; Tryb live (plik-znacznik) ma pierwszeństwo przed [autologin]; oba pomijają ekran logowania.
+    let mut auto_user: string = users::find_live_user(st.cfg)
+    if auto_user == "" is auto_user = st.cfg.autologin_user end
+    if auto_user != "" is
+        st.autologin_user = auto_user
+        st.autologin_session = st.cfg.autologin_session
+        st.autologin_at = shim::hdm_now_ms() + st.cfg.autologin_delay * 1000
+        st.greeter_wanted = false
+    end
+
+    run(st)
+end
