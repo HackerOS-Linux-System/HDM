@@ -1,0 +1,292 @@
+pub struct HkDoc is
+    pub keys:  [string]
+    pub vals:  [string]
+    pub error: string
+end
+
+pub fn empty() -> HkDoc is
+    return HkDoc { keys: [], vals: [], error: "" }
+end
+
+fn failed(msg: string) -> HkDoc is
+    return HkDoc { keys: [], vals: [], error: msg }
+end
+
+fn dopen() -> string is
+    return "${{"
+end
+
+fn dclose() -> string is
+    return "}}"
+end
+
+fn arr_mark() -> string is
+    return "\x01"
+end
+
+;; "abc \"x\" \\ " (bez zewnętrznych cudzysłowów) -> abc "x" \
+fn unescape(s: string) -> string is
+    if !string_contains(s, "\\") is return s end
+    let mut out: string = ""
+    let n: int = string_len(s)
+    let mut i: int = 0
+    while i < n is
+        let c: string = string_slice(s, i, i + 1)
+        if c == "\\" && i + 1 < n is
+            out = out + string_slice(s, i + 1, i + 2)
+            i += 2
+        else is
+            out = out + c
+            i += 1
+        end
+    end
+    return out
+end
+
+;; Indeks zamykającego cudzysłowu dla napisu zaczynającego się cudzysłowem w s[0]; -1 gdy brak.
+fn closing_quote(s: string) -> int is
+    let n: int = string_len(s)
+    let mut i: int = 1
+    while i < n is
+        let c: string = string_slice(s, i, i + 1)
+        if c == "\\" is
+            i += 2
+            continue
+        end
+        if c == "\"" is return i end
+        i += 1
+    end
+    return -1
+end
+
+;; wartość po `=>`: napis w cudzysłowie (odcięty i odescapowany), tablica (z prefiksem) albo goły tekst
+fn parse_value(raw: string) -> string is
+    let v: string = string_trim(raw)
+    if string_starts_with(v, "\"") is
+        let close: int = closing_quote(v)
+        if close < 0 is return unescape(string_slice(v, 1, string_len(v))) end
+        return unescape(string_slice(v, 1, close))
+    end
+    if string_starts_with(v, "[") is return arr_mark() + v end
+    return v
+end
+
+fn count_dashes(s: string) -> int is
+    let mut n: int = 0
+    while n < string_len(s) && string_slice(s, n, n + 1) == "-" is
+        n += 1
+    end
+    return n
+end
+
+fn path_of(section: string, stack: [string]) -> string is
+    let mut p: string = section
+    let mut i: int = 0
+    while i < array_len(stack) is
+        if p == "" is
+            p = stack[i]
+        else is
+            p = p + "." + stack[i]
+        end
+        i += 1
+    end
+    return p
+end
+
+pub fn parse(text: string) -> HkDoc is
+    let mut keys: [string] = []
+    let mut vals: [string] = []
+    let mut section: string = ""
+    let mut stack: [string] = []
+    let lines: [string] = string_split(text, "\n")
+    let mut i: int = 0
+    while i < array_len(lines) is
+        let raw: string = string_trim(lines[i])
+        i += 1
+        if raw == "" || string_starts_with(raw, "!") is continue end
+        if string_starts_with(raw, "[") is
+            if !string_ends_with(raw, "]") is
+                return failed("linia " + to_string(i) + ": brak ] w naglowku sekcji")
+            end
+            section = string_trim(string_slice(raw, 1, string_len(raw) - 1))
+            stack = []
+            continue
+        end
+        if !string_starts_with(raw, "-") is
+            return failed("linia " + to_string(i) + ": oczekiwano [sekcji] albo '-> klucz => wartosc'")
+        end
+        let dashes: int = count_dashes(raw)
+        if string_slice(raw, dashes, dashes + 1) != ">" is
+            return failed("linia " + to_string(i) + ": po kreskach oczekiwano '>'")
+        end
+        let rest: string = string_trim(string_slice(raw, dashes + 1, string_len(raw)))
+        let arrow: int = string_find(rest, "=>")
+        let key: string = if arrow < 0 then rest else string_trim(string_slice(rest, 0, arrow))
+        if key == "" is
+            return failed("linia " + to_string(i) + ": pusty klucz")
+        end
+        ;; stos kluczy: poziom d => stack[0..d-1] + key
+        let mut ns: [string] = []
+        let mut k: int = 0
+        while k < dashes - 1 && k < array_len(stack) is
+            ns = array_push(ns, stack[k])
+            k += 1
+        end
+        ns = array_push(ns, key)
+        stack = ns
+        if arrow >= 0 is
+            keys = array_push(keys, path_of(section, stack))
+            vals = array_push(vals, parse_value(string_slice(rest, arrow + 2, string_len(rest))))
+        end
+    end
+    return HkDoc { keys: keys, vals: vals, error: "" }
+end
+
+;; ostatni wpis o tej ścieżce (-1 = brak)
+pub fn find_index(doc: HkDoc, path: string) -> int is
+    let mut i: int = array_len(doc.keys) - 1
+    while i >= 0 is
+        if doc.keys[i] == path is return i end
+        i -= 1
+    end
+    return -1
+end
+
+fn strip_marker(v: string) -> string is
+    if string_starts_with(v, arr_mark()) is return string_slice(v, 1, string_len(v)) end
+    return v
+end
+
+fn resolve_text(doc: HkDoc, text: string, depth: int) -> string is
+    if depth > 16 || !string_contains(text, dopen()) is return text end
+    let mut out: string = ""
+    let mut rest: string = text
+    while string_contains(rest, dopen()) is
+        let start: int = string_find(rest, dopen())
+        out = out + string_slice(rest, 0, start)
+        let after: string = string_slice(rest, start + 2, string_len(rest))
+        let close: int = string_find(after, dclose())
+        if close < 0 is
+            out = out + dopen() + after
+            rest = ""
+        else is
+            let expr: string = string_trim(string_slice(after, 0, close))
+            rest = string_slice(after, close + 1, string_len(after))
+            if string_starts_with(expr, "env:") is
+                out = out + env_get(string_slice(expr, 4, string_len(expr)))
+            else is
+                let idx: int = find_index(doc, expr)
+                if idx < 0 is
+                    out = out + dopen() + expr + dclose()
+                else is
+                    out = out + resolve_text(doc, strip_marker(doc.vals[idx]), depth + 1)
+                end
+            end
+        end
+    end
+    return out + rest
+end
+
+;; parse + sprawdzenie interpolacji (nierozwiązana / cykliczna referencja = błąd)
+pub fn load(text: string) -> HkDoc is
+    let doc: HkDoc = parse(text)
+    if doc.error != "" is return doc end
+    let mut i: int = 0
+    while i < array_len(doc.keys) is
+        let r: string = resolve_text(doc, strip_marker(doc.vals[i]), 0)
+        if string_contains(r, dopen()) is
+            return failed("interpolacja: nierozwiazane odwolanie w '" + doc.keys[i] + "'")
+        end
+        i += 1
+    end
+    return doc
+end
+
+pub fn has(doc: HkDoc, path: string) -> bool is
+    return find_index(doc, path) >= 0
+end
+
+pub fn get(doc: HkDoc, path: string, fallback: string) -> string is
+    let idx: int = find_index(doc, path)
+    if idx < 0 is return fallback end
+    return resolve_text(doc, strip_marker(doc.vals[idx]), 0)
+end
+
+pub fn get_bool(doc: HkDoc, path: string, fallback: bool) -> bool is
+    let v: string = string_lower(get(doc, path, ""))
+    if v == "true" is return true end
+    if v == "false" is return false end
+    return fallback
+end
+
+fn all_digits(s: string) -> bool is
+    let n: int = string_len(s)
+    if n == 0 is return false end
+    let digits: string = "0123456789"
+    let mut i: int = 0
+    while i < n is
+        if !string_contains(digits, string_slice(s, i, i + 1)) is return false end
+        i += 1
+    end
+    return true
+end
+
+pub fn get_int(doc: HkDoc, path: string, fallback: int) -> int is
+    let v: string = get(doc, path, "")
+    if !all_digits(v) is return fallback end
+    return str_to_int(v)
+end
+
+;; [a, "b c", 3] -> ["a", "b c", "3"]
+pub fn parse_array(raw: string) -> [string] is
+    let mut out: [string] = []
+    let t: string = string_trim(raw)
+    if !string_starts_with(t, "[") is return out end
+    let end_at: int = if string_ends_with(t, "]") then string_len(t) - 1 else string_len(t)
+    let body: string = string_slice(t, 1, end_at)
+    let n: int = string_len(body)
+    let mut i: int = 0
+    let mut cur: string = ""
+    let mut quoted: bool = false
+    let mut had: bool = false
+    while i < n is
+        let c: string = string_slice(body, i, i + 1)
+        if quoted is
+            if c == "\\" && i + 1 < n is
+                cur = cur + string_slice(body, i + 1, i + 2)
+                i += 2
+                continue
+            end
+            if c == "\"" is
+                quoted = false
+            else is
+                cur = cur + c
+            end
+        elsif c == "\"" is
+            quoted = true
+            had = true
+        elsif c == "," is
+            if had || string_trim(cur) != "" is out = array_push(out, if had then cur else string_trim(cur)) end
+            cur = ""
+            had = false
+        else is
+            cur = cur + c
+        end
+        i += 1
+    end
+    if had || string_trim(cur) != "" is out = array_push(out, if had then cur else string_trim(cur)) end
+    return out
+end
+
+pub fn get_array(doc: HkDoc, path: string) -> [string] is
+    let idx: int = find_index(doc, path)
+    let mut out: [string] = []
+    if idx < 0 is return out end
+    let items: [string] = parse_array(strip_marker(doc.vals[idx]))
+    let mut i: int = 0
+    while i < array_len(items) is
+        out = array_push(out, resolve_text(doc, items[i], 0))
+        i += 1
+    end
+    return out
+end
