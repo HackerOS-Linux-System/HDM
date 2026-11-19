@@ -1,0 +1,70 @@
+mod assets_gen
+mod client
+mod commands
+mod gconfig
+use "bit -> silver" from "silver"
+use "bit -> hdm-common" from "common"
+
+;; Wołane co 100 ms. Odbiera asynchroniczny wynik skanu odcisku palca i wysyła go do frontendu
+;; jako zdarzenie "hdm://fingerprint" (payload = AuthResult).
+fn on_tick(a: app::App) -> app::App is
+    if !client::fp_pending() is return a end
+    let fd: int = client::conn()
+    if fd <= 0 is
+        client::set_fp_pending(false)
+        app::emit(a, "hdm://fingerprint", client::auth_unavailable("Lost connection to the HDM daemon"))
+        return a
+    end
+    let line: string = shim::hdm_try_line(fd)
+    if line != "" is
+        client::set_fp_pending(false)
+        app::emit(a, "hdm://fingerprint", client::auth_result(line))
+    elsif shim::hdm_io_status() == 2 is
+        client::set_fp_pending(false)
+        shim::hdm_close(fd)
+        client::set_conn(0)
+        app::emit(a, "hdm://fingerprint", client::auth_unavailable("Lost connection to the HDM daemon"))
+    end
+    return a
+end
+
+fn main() is
+    assets_gen::install()              ;; frontend wbudowany w binarkę (po `node ../tools/embed.mjs`)
+    app::set_app_id("hdm-greeter")
+    gconfig::ensure_user_default_config()
+    client::init()
+
+    let mut a = app::new("HDM", 1280, 800)
+    ;; pełny ekran = dokładnie rozmiar monitora; zastępuje fit_window_to_monitor() z wersji Tauri
+    a = app::set_fullscreen(a, true)
+    a = app::set_min_size(a, 640, 480)
+
+    a = app::command(a, "connect_daemon", commands::connect_daemon)
+    a = app::command(a, "get_sessions", commands::get_sessions)
+    a = app::command(a, "get_users", commands::get_users)
+    a = app::command(a, "authenticate", commands::authenticate)
+    a = app::command(a, "authenticate_pattern", commands::authenticate_pattern)
+    a = app::command(a, "authenticate_fingerprint", commands::authenticate_fingerprint)
+    a = app::command(a, "has_fingerprint", commands::has_fingerprint)
+    a = app::command(a, "pattern_is_configured", commands::pattern_is_configured)
+    a = app::command(a, "start_session", commands::start_session)
+    a = app::command(a, "power_action", commands::power_action)
+    a = app::command(a, "get_wallpaper", commands::get_wallpaper)
+    a = app::command(a, "get_greeter_config", commands::get_greeter_config)
+    a = app::command(a, "get_hostname", commands::get_hostname)
+    a = app::command(a, "get_current_time", commands::get_current_time)
+    a = app::command(a, "get_current_date", commands::get_current_date)
+    a = app::command(a, "read_user_avatar", commands::read_user_avatar)
+    a = app::command(a, "check_network", commands::check_network)
+    a = app::command(a, "get_battery_info", commands::get_battery_info)
+    a = app::command(a, "get_volume_level", commands::get_volume_level)
+    a = app::command(a, "set_keyboard_layout_hdm", commands::set_keyboard_layout_hdm)
+
+    a = app::on_tick(a, on_tick)
+    a = app::set_tick_interval(a, 100)
+
+    a = app::load_html(a, "frontend/index.html")
+    a = app::load_css(a, "frontend/dist/app.css")
+    a = app::load_js(a, ["frontend/dist/app.js"])
+    app::run(a)
+end
