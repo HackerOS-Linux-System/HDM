@@ -1,0 +1,13 @@
+use "bit -> hdm-common" from "common"
+mod logging
+
+;; "" = OK, inaczej opis błędu (nie fatalny: pętla greetera loguje ostrzeżenie i jedzie dalej)
+pub fn switch_to(vt: int) -> string is
+    let rc: int = shim::hdm_vt_switch(vt)
+    if rc == -1 is return "cannot open /dev/tty0" end
+    if rc == -2 is return "VT_ACTIVATE ioctl failed" end
+    if rc == 1 is
+        logging::warn("VT_WAITACTIVE failed for VT " + to_string(vt) + " (continuing anyway)")
+    end
+    return ""
+end
