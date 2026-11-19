@@ -1,0 +1,104 @@
+pub fn lb() -> string is
+    return "{{"
+end
+
+pub fn rb() -> string is
+    return "}}"
+end
+
+pub fn join(parts: [string], sep: string) -> string is
+    let mut out: string = ""
+    let mut i: int = 0
+    while i < array_len(parts) is
+        if i > 0 is out = out + sep end
+        out = out + parts[i]
+        i += 1
+    end
+    return out
+end
+
+;; "napis" z escapowaniem
+pub fn q(s: string) -> string is
+    return "\"" + shim::hdm_json_escape(s) + "\""
+end
+
+pub fn bool_text(b: bool) -> string is
+    if b is return "true" end
+    return "false"
+end
+
+pub fn f_str(key: string, val: string) -> string is
+    return q(key) + ":" + q(val)
+end
+
+pub fn f_int(key: string, val: int) -> string is
+    return q(key) + ":" + to_string(val)
+end
+
+pub fn f_bool(key: string, val: bool) -> string is
+    return q(key) + ":" + bool_text(val)
+end
+
+;; wartość już będąca JSON-em (tablica, obiekt, null)
+pub fn f_raw(key: string, raw: string) -> string is
+    return q(key) + ":" + raw
+end
+
+;; pole pomijane, gdy wartość pusta (odpowiednik Option<String>::None)
+pub fn f_opt(key: string, val: string) -> string is
+    if val == "" is return "" end
+    return f_str(key, val)
+end
+
+;; składa obiekt, pomijając puste pola
+pub fn obj(fields: [string]) -> string is
+    let mut keep: [string] = []
+    let mut i: int = 0
+    while i < array_len(fields) is
+        if fields[i] != "" is keep = array_push(keep, fields[i]) end
+        i += 1
+    end
+    return lb() + join(keep, ",") + rb()
+end
+
+pub fn arr(items: [string]) -> string is
+    return "[" + join(items, ",") + "]"
+end
+
+pub fn str_arr(items: [string]) -> string is
+    let mut out: [string] = []
+    let mut i: int = 0
+    while i < array_len(items) is
+        out = array_push(out, q(items[i]))
+        i += 1
+    end
+    return arr(out)
+end
+
+;; odczyt (przez shim)
+pub fn get_str(json: string, key: string) -> string is
+    return shim::hdm_json_get_str(json, key)
+end
+
+pub fn get_int(json: string, key: string, fallback: int) -> int is
+    return shim::hdm_json_get_int(json, key, fallback)
+end
+
+pub fn get_bool(json: string, key: string, fallback: bool) -> bool is
+    let d: int = if fallback then 1 else 0
+    return shim::hdm_json_get_bool(json, key, d) == 1
+end
+
+;; tablica liczb -> [int]
+pub fn get_int_array(json: string, key: string) -> [int] is
+    let csv: string = shim::hdm_json_get_int_array(json, key)
+    let mut out: [int] = []
+    if csv == "" is return out end
+    let parts: [string] = string_split(csv, ",")
+    let mut i: int = 0
+    while i < array_len(parts) is
+        out = array_push(out, str_to_int(parts[i]))
+        i += 1
+    end
+    return out
+end
