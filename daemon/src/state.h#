@@ -1,0 +1,116 @@
+use "bit -> hdm-common" from "common"
+mod config
+mod pam_auth
+
+pub fn socket_path() -> string is
+    return "/run/hdm/hdm.sock"
+end
+
+pub fn config_path() -> string is
+    return "/etc/hdm/hdm.hk"
+end
+
+pub fn sessions_run_dir() -> string is
+    return "/run/hdm/sessions"
+end
+
+pub struct ActiveSession is
+    pub id:              string
+    pub username:        string
+    pub session_name:    string
+    pub session_type:    string
+    pub pid:             int
+    pub started_at:      int
+    pub display:         string
+    pub wayland_display: string
+end
+
+;; Połączony klient IPC (greeter). auth_user = użytkownik uwierzytelniony NA TYM połączeniu.
+pub struct Client is
+    pub fd:        int
+    pub auth_user: string
+end
+
+;; Trwające skanowanie odcisku palca (fprintd-verify jako proces potomny, bez blokowania pętli).
+pub struct FpJob is
+    pub fd:       int
+    pub pid:      int
+    pub user:     string
+    pub deadline: int
+end
+
+pub struct DaemonState is
+    pub cfg:               config::HdmConfig
+    pub limiter:           pam_auth::RateLimiter
+    pub sessions:          [ActiveSession]
+    pub clients:           [Client]
+    pub fp_jobs:           [FpJob]
+    pub listen_fd:         int
+    pub greeter_pid:       int
+    pub greeter_wanted:    bool
+    pub greeter_retry_at:  int
+    pub greeter_mem_check_at: int   ;; kiedy następny pomiar pamięci greetera (ms)
+    ;; autologin: moment (ms, zegar monotoniczny) startu sesji, -1 = brak
+    pub autologin_at:      int
+    pub autologin_user:    string
+    pub autologin_session: string
+end
+
+pub fn new_state(cfg: config::HdmConfig) -> DaemonState is
+    return DaemonState {
+        cfg: cfg,
+        limiter: pam_auth::new_limiter(),
+        sessions: [],
+        clients: [],
+        fp_jobs: [],
+        listen_fd: -1,
+        greeter_pid: 0,
+        greeter_wanted: true,
+        greeter_retry_at: 0,
+        greeter_mem_check_at: 0,
+        autologin_at: -1,
+        autologin_user: "",
+        autologin_session: ""
+    }
+end
+
+pub fn client_user(st: DaemonState, fd: int) -> string is
+    let mut i: int = 0
+    while i < array_len(st.clients) is
+        if st.clients[i].fd == fd is return st.clients[i].auth_user end
+        i += 1
+    end
+    return ""
+end
+
+pub fn set_client_user(st: DaemonState, fd: int, user: string) -> DaemonState is
+    let mut out: [Client] = []
+    let mut i: int = 0
+    while i < array_len(st.clients) is
+        if st.clients[i].fd == fd is
+            out = array_push(out, Client { fd: fd, auth_user: user })
+        else is
+            out = array_push(out, st.clients[i])
+        end
+        i += 1
+    end
+    let mut n: DaemonState = st
+    n.clients = out
+    return n
+end
+
+pub fn remove_client(st: DaemonState, fd: int) -> DaemonState is
+    let mut out: [Client] = []
+    let mut i: int = 0
+    while i < array_len(st.clients) is
+        if st.clients[i].fd != fd is out = array_push(out, st.clients[i]) end
+        i += 1
+    end
+    let mut n: DaemonState = st
+    n.clients = out
+    return n
+end
+
+pub fn has_active_session(st: DaemonState) -> bool is
+    return array_len(st.sessions) > 0
+end
