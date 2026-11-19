@@ -1,0 +1,148 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+mod default_config
+mod logging
+
+pub struct HdmConfig is
+    pub greeter_path:        string
+    pub vt:                  int
+    ;; Kompozytor Wayland, w którym uruchamiany jest greeter: "cage" (domyślnie), "labwc", "none" albo
+    ;; inny binarek zgodny z cage (-s -- <cmd>). Patrz main.h#::compositor_argv.
+    pub compositor:          string
+    ;; WLR_RENDERER dla kompozytora (np. "pixman"); "" = auto.
+    pub compositor_renderer: string
+    ;; Użytkownik systemowy dla greetera; "" = root.
+    pub greeter_user:        string
+    ;; Limit pamięci (MiB, suma RSS kompozytora + greetera); po przekroczeniu daemon restartuje greetera. 0 = bez limitu.
+    pub greeter_memory_limit: int
+    pub autologin_user:      string
+    pub autologin_session:   string
+    pub autologin_delay:     int
+    pub live_autologin:      bool
+    pub live_marker_path:    string
+    pub session_timeout:     int
+    pub theme:               string
+    pub background:          string
+    pub clock_format:        string
+    pub show_user_list:      bool
+    pub allow_root:          bool
+    pub allow_guest:         bool
+    pub minimum_uid:         int
+    pub maximum_uid:         int
+    pub sessions_dir:        [string]
+    pub default_session:     string
+    pub power_shutdown:      string
+    pub power_reboot:        string
+    pub power_suspend:       string
+    pub power_hibernate:     string
+end
+
+pub struct LoadResult is
+    pub cfg:   HdmConfig
+    pub error: string
+end
+
+pub fn default_sessions_dir() -> [string] is
+    return ["/usr/share/wayland-sessions", "/usr/share/xsessions", "/usr/local/share/wayland-sessions"]
+end
+
+;; Odpowiednik HdmConfig::default() — zsynchronizowany z config/hdm.hk (patrz tests.h#).
+pub fn defaults() -> HdmConfig is
+    return HdmConfig {
+        greeter_path: "/usr/bin/hdm-greeter",
+        vt: 1,
+        compositor: "cage",
+        compositor_renderer: "",
+        greeter_user: "",
+        greeter_memory_limit: 1024,
+        autologin_user: "",
+        autologin_session: "",
+        autologin_delay: 0,
+        live_autologin: true,
+        live_marker_path: ".config/Blue-Environment/.live",
+        session_timeout: 0,
+        theme: "graphite",
+        background: "/usr/share/wallpapers/HackerOS-Wallpapers/Wallpaper23.png",
+        clock_format: "%H:%M",
+        show_user_list: true,
+        allow_root: false,
+        allow_guest: false,
+        minimum_uid: 1000,
+        maximum_uid: 65533,
+        sessions_dir: default_sessions_dir(),
+        default_session: "blue-environment",
+        power_shutdown: "shutdown -h now",
+        power_reboot: "reboot",
+        power_suspend: "systemctl suspend",
+        power_hibernate: "systemctl hibernate"
+    }
+end
+
+pub fn from_hk(doc: hk::HkDoc) -> HdmConfig is
+    let d: HdmConfig = defaults()
+    let dirs: [string] = if hk::has(doc, "general.sessions_dir") then hk::get_array(doc, "general.sessions_dir") else d.sessions_dir
+    return HdmConfig {
+        greeter_path: hk::get(doc, "general.greeter_path", d.greeter_path),
+        vt: hk::get_int(doc, "general.vt", d.vt),
+        compositor: hk::get(doc, "general.compositor", d.compositor),
+        compositor_renderer: hk::get(doc, "general.compositor_renderer", d.compositor_renderer),
+        greeter_user: hk::get(doc, "general.greeter_user", d.greeter_user),
+        greeter_memory_limit: hk::get_int(doc, "general.greeter_memory_limit", d.greeter_memory_limit),
+        autologin_user: hk::get(doc, "autologin.user", ""),
+        autologin_session: hk::get(doc, "autologin.session", ""),
+        autologin_delay: hk::get_int(doc, "autologin.delay", d.autologin_delay),
+        live_autologin: hk::get_bool(doc, "autologin.live_detect", d.live_autologin),
+        live_marker_path: hk::get(doc, "autologin.live_marker", d.live_marker_path),
+        session_timeout: hk::get_int(doc, "general.session_timeout", d.session_timeout),
+        theme: hk::get(doc, "general.theme", d.theme),
+        background: hk::get(doc, "general.background", d.background),
+        clock_format: hk::get(doc, "general.clock_format", d.clock_format),
+        show_user_list: hk::get_bool(doc, "general.show_user_list", d.show_user_list),
+        allow_root: hk::get_bool(doc, "general.allow_root", d.allow_root),
+        allow_guest: hk::get_bool(doc, "general.allow_guest", d.allow_guest),
+        minimum_uid: hk::get_int(doc, "general.minimum_uid", d.minimum_uid),
+        maximum_uid: hk::get_int(doc, "general.maximum_uid", d.maximum_uid),
+        sessions_dir: dirs,
+        default_session: hk::get(doc, "default.session", d.default_session),
+        power_shutdown: hk::get(doc, "power.shutdown", d.power_shutdown),
+        power_reboot: hk::get(doc, "power.reboot", d.power_reboot),
+        power_suspend: hk::get(doc, "power.suspend", d.power_suspend),
+        power_hibernate: hk::get(doc, "power.hibernate", d.power_hibernate)
+    }
+end
+
+;; Parsuje tekst .hk (bez dostępu do dysku).
+pub fn load_config_str(content: string) -> LoadResult is
+    let doc: hk::HkDoc = hk::load(content)
+    if doc.error != "" is
+        return LoadResult { cfg: defaults(), error: ".hk parse error: " + doc.error }
+    end
+    return LoadResult { cfg: from_hk(doc), error: "" }
+end
+
+pub fn load_config(path: string) -> LoadResult is
+    if !fs::exists(path) is
+        return LoadResult { cfg: defaults(), error: "Cannot load " + path + ": file not found" }
+    end
+    let r: LoadResult = load_config_str(fs::read(path))
+    if r.error != "" is
+        return LoadResult { cfg: r.cfg, error: r.error + " (in " + path + ")" }
+    end
+    return r
+end
+
+pub fn default_config_content() -> string is
+    return default_config::text()
+end
+
+;; Zapisuje domyślny /etc/hdm/hdm.hk, jeśli plik nie istnieje.
+pub fn ensure_default_config() is
+    let config_path: string = "/etc/hdm/hdm.hk"
+    if fs::exists(config_path) is return end
+    fs::mkdir("/etc/hdm")
+    ;; fs::write nie zwraca wartości w backendzie H# (void) — sprawdzamy efekt przez fs::exists
+    fs::write(config_path, default_config_content())
+    if !fs::exists(config_path) is
+        logging::warn("Could not write default config to " + config_path)
+    end
+end
