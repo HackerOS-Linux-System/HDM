@@ -1,0 +1,103 @@
+use "bit -> hdm-common" from "common"
+use "std -> fs" from "fs"
+use "std -> process" from "process"
+
+;; ── Sieć ────────────────────────────────────────────────────────────────────
+;; Prawda, jeśli jakikolwiek interfejs poza `lo` ma operstate "up". NIE sprawdza internetu (ekran logowania
+;; ma działać offline) — „sieć OK” to tylko łączność warstwy łącza.
+pub fn any_interface_up(names: [string], states: [string]) -> bool is
+    let mut i: int = 0
+    while i < array_len(names) is
+        if names[i] != "lo" && states[i] == "up" is return true end
+        i += 1
+    end
+    return false
+end
+
+pub fn check_network() -> bool is
+    let base: string = "/sys/class/net"
+    if !fs::is_dir(base) is return true end     ;; sama kontrola zawiodła — nie blokuj logowania ikoną statusu
+    let entries: [string] = fs::list_dir(base)
+    let mut names: [string] = []
+    let mut states: [string] = []
+    let mut i: int = 0
+    while i < array_len(entries) is
+        let p: string = base + "/" + entries[i] + "/operstate"
+        if fs::exists(p) is
+            names = array_push(names, entries[i])
+            states = array_push(states, string_trim(fs::read(p)))
+        end
+        i += 1
+    end
+    return any_interface_up(names, states)
+end
+
+;; ── Bateria ─────────────────────────────────────────────────────────────────
+;; capacity: surowa zawartość .../capacity ("87\n"); status: zawartość .../status ("Charging\n") lub "".
+;; Zwraca "" gdy capacity nie jest liczbą 0-100, inaczej JSON {"percentage":N,"charging":bool}.
+pub fn parse_battery_info(capacity: string, status: string) -> string is
+    let c: string = string_trim(capacity)
+    if c == "" || string_len(c) > 3 is return "" end
+    let digits: string = "0123456789"
+    let mut i: int = 0
+    while i < string_len(c) is
+        if !string_contains(digits, string_slice(c, i, i + 1)) is return "" end
+        i += 1
+    end
+    let pct: int = str_to_int(c)
+    if pct > 255 is return "" end
+    let s: string = string_lower(string_trim(status))
+    let charging: bool = s == "charging" || s == "full"
+    return jsonw::obj([jsonw::f_int("percentage", pct), jsonw::f_bool("charging", charging)])
+end
+
+;; JSON baterii albo "" (brak baterii — np. desktop).
+pub fn get_battery_info() -> string is
+    let base: string = "/sys/class/power_supply"
+    if !fs::is_dir(base) is return "" end
+    let entries: [string] = fs::list_dir(base)
+    let mut i: int = 0
+    while i < array_len(entries) is
+        if string_starts_with(entries[i], "BAT") is
+            let dir: string = base + "/" + entries[i]
+            if !fs::exists(dir + "/capacity") is return "" end
+            let status: string = if fs::exists(dir + "/status") then fs::read(dir + "/status") else ""
+            return parse_battery_info(fs::read(dir + "/capacity"), status)
+        end
+        i += 1
+    end
+    return ""
+end
+
+;; ── Głośność ────────────────────────────────────────────────────────────────
+;; `amixer get Master`, np. "Front Left: Playback 45 [72%] [on]" — pierwsze [N%]. -1 = brak/niepoprawne.
+pub fn parse_amixer_volume(output: string) -> int is
+    let start: int = string_find(output, "[")
+    if start < 0 is return -1 end
+    let rest: string = string_slice(output, start + 1, string_len(output))
+    let stop: int = string_find(rest, "%")
+    if stop < 0 is return -1 end
+    let num: string = string_trim(string_slice(rest, 0, stop))
+    if num == "" || string_len(num) > 3 is return -1 end
+    let digits: string = "0123456789"
+    let mut i: int = 0
+    while i < string_len(num) is
+        if !string_contains(digits, string_slice(num, i, i + 1)) is return -1 end
+        i += 1
+    end
+    return str_to_int(num)
+end
+
+pub fn get_volume_level() -> int is
+    ;; dźwięk często nie jest jeszcze zainicjowany na ekranie logowania — brak miksera to normalny wynik
+    return parse_amixer_volume(process::run_args("amixer", ["get", "Master"]))
+end
+
+;; ── Odcisk palca ────────────────────────────────────────────────────────────
+;; Wyjście `fprintd-list <user>`: wpis „Fingerprints for user …” = są zapisane palce;
+;; „has no fingers enrolled” / puste wyjście (brak czytnika, brak fprintd) = brak.
+pub fn fprintd_list_has_fingers(output: string) -> bool is
+    if output == "" is return false end
+    if string_contains(output, "no fingers") is return false end
+    return string_contains(output, "Fingerprints for user") || string_contains(output, "#0:")
+end
