@@ -1,0 +1,128 @@
+use "bit -> hdm-common" from "common"
+mod config
+mod state
+mod users
+mod vt
+mod logging
+
+;; Zwraca (uid, gid) użytkownika z [general] -> greeter_user; root, jeśli nie ustawiono / nie istnieje.
+pub struct Ids is
+    pub uid: int
+    pub gid: int
+end
+
+pub fn resolve_greeter_runtime_user(username: string) -> Ids is
+    if username == "" is return Ids { uid: 0, gid: 0 } end
+    let e: users::PwEntry = users::lookup(username)
+    if e.uid < 0 is
+        logging::warn("[general] -> greeter_user '" + username + "' not found in /etc/passwd - running the greeter as root instead")
+        return Ids { uid: 0, gid: 0 }
+    end
+    return Ids { uid: e.uid, gid: e.gid }
+end
+
+fn basename(p: string) -> string is
+    let parts: [string] = string_split(p, "/")
+    return parts[array_len(parts) - 1]
+end
+
+;; argv (rozdzielone '\n') dla kompozytora opakowującego greeter; "none"/"" = sam greeter.
+;; cage i nieznane kompozytory: -s -- <cmd>; labwc: -S <cmd> (-S kończy kompozytor razem z klientem).
+pub fn compositor_argv(compositor: string, greeter_path: string) -> string is
+    if compositor == "" || string_lower(compositor) == "none" is return greeter_path end
+    if string_lower(basename(compositor)) == "labwc" is
+        return compositor + "\n-S\n" + greeter_path
+    end
+    return compositor + "\n-s\n--\n" + greeter_path
+end
+
+fn greeter_env(cfg: config::HdmConfig, runtime_dir: string, home: string) -> string is
+    let mut env: [string] = [
+        "HDM_SOCKET=" + state::socket_path(),
+        "HDM_CONFIG=" + state::config_path(),
+        "XDG_SESSION_TYPE=wayland",
+        "XDG_RUNTIME_DIR=" + runtime_dir,
+        "XDG_SEAT=seat0",
+        "XDG_VTNR=" + to_string(cfg.vt),
+        "HOME=" + home,
+        "PATH=/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+    ]
+    ;; wartości dziedziczone z unitu systemd (język/strefa), jeśli są
+    let inherit: [string] = ["LANG", "LC_ALL", "TZ"]
+    let mut i: int = 0
+    while i < array_len(inherit) is
+        let v: string = env_get(inherit[i])
+        if v != "" is env = array_push(env, inherit[i] + "=" + v) end
+        i += 1
+    end
+    ;; Silver rysuje programowo (SDL2 software renderer) — nie ma już obejść dla WebKitGTK/DMA-BUF.
+    ;; WLR_RENDERER dotyczy samego kompozytora (wlroots), np. "pixman" przy awariach GL.
+    if cfg.compositor_renderer != "" is env = array_push(env, "WLR_RENDERER=" + cfg.compositor_renderer) end
+    return jsonw::join(env, "\n")
+end
+
+;; Uruchamia greetera. Zwraca PID albo 0 (przy błędzie).
+pub fn launch(cfg: config::HdmConfig) -> int is
+    let ids: Ids = resolve_greeter_runtime_user(cfg.greeter_user)
+    let runtime_dir: string = "/run/user/" + to_string(ids.uid)
+    if shim::hdm_mkdir_p(runtime_dir, 448) != 1 is
+        logging::warn("Could not create greeter XDG_RUNTIME_DIR '" + runtime_dir + "' - the compositor will likely fail to start")
+    end
+    shim::hdm_chown(runtime_dir, ids.uid, ids.gid)
+    shim::hdm_chmod(runtime_dir, 448)
+
+    let home: string = if ids.uid == 0 then "/root" else users::lookup(cfg.greeter_user).home
+    let env: string = greeter_env(cfg, runtime_dir, home)
+    let drop: string = if ids.uid == 0 then "" else cfg.greeter_user
+    let use_comp: bool = cfg.compositor != "" && string_lower(cfg.compositor) != "none"
+
+    if use_comp is
+        logging::info("Launching greeter: " + cfg.greeter_path + " (via " + cfg.compositor + ")")
+    else is
+        logging::info("Launching greeter: " + cfg.greeter_path)
+    end
+
+    let vt_err: string = vt::switch_to(cfg.vt)
+    if vt_err != "" is
+        logging::warn("VT switch to " + to_string(cfg.vt) + " failed: " + vt_err + " - continuing")
+    end
+
+    let mut pid: int = shim::hdm_spawn(compositor_argv(cfg.compositor, cfg.greeter_path), env, "/", drop, ids.uid, ids.gid)
+    if pid < 0 && use_comp is
+        logging::error("Failed to launch compositor '" + cfg.compositor + "' (code " + to_string(shim::hdm_spawn_error()) + ") - falling back to launching '" + cfg.greeter_path + "' directly this cycle")
+        pid = shim::hdm_spawn(cfg.greeter_path, env, "/", drop, ids.uid, ids.gid)
+    end
+    if pid < 0 is
+        logging::error("Failed to launch greeter '" + cfg.greeter_path + "' (code " + to_string(shim::hdm_spawn_error()) + "). Is hdm-greeter installed there?")
+        return 0
+    end
+    logging::info("Greeter process PID: " + to_string(pid))
+    return pid
+end
+
+;; Zatrzymuje greetera (SIGTERM, potem SIGKILL po ~2 s) — musi zwolnić DRM master przed sesją użytkownika.
+;; Uwaga (semantyka H#): `let x = st` PRZENOSI wartość — po tym nie wolno czytać `st`, więc pracujemy na jednej zmiennej.
+pub fn stop(st0: state::DaemonState) -> state::DaemonState is
+    let mut st: state::DaemonState = st0
+    let pid: int = st.greeter_pid
+    if pid <= 0 is return st end
+    logging::info("Stopping greeter (PID " + to_string(pid) + ")")
+    shim::hdm_kill(pid, 15)
+    let mut waited: int = 0
+    let mut done: bool = false
+    while waited < 40 && !done is
+        if shim::hdm_child_poll(pid) != -1 is
+            done = true
+        else is
+            shim::hdm_sleep_ms(50)
+            waited += 1
+        end
+    end
+    if !done is
+        shim::hdm_kill(pid, 9)
+        shim::hdm_sleep_ms(100)
+        shim::hdm_child_poll(pid)
+    end
+    st.greeter_pid = 0
+    return st
+end
